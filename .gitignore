@@ -1,0 +1,26 @@
+# Derleme ciktilari
+build/
+dist/
+*.spec.bak
+
+# ffmpeg ikilileri (161 MB) -- GitHub'a konmaz.
+# build_exe.bat calistirmadan once BtbN'in "win64-gpl-shared" build'ini
+# indirip ffplay.exe haric icerigi ffmpeg/ klasorune kopyalayin:
+# https://github.com/BtbN/FFmpeg-Builds/releases
+ffmpeg/
+ffmpeg.full_backup/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Indirilen videolar
+downloads/
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
