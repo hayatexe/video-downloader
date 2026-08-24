@@ -36,6 +36,16 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; altina kopyalar, asagidaki wildcard da beraberinde tasir.
 Source: "dist\{#MyAppName}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+; Inno varsayilan olarak eski dosyalari SILMEZ, sadece uzerine yazar. Bu
+; surumde paket yapisi degisti (ffmpeg tasindi, yt_dlp runtime/ altina gecti),
+; dolayisiyla temizlenmezse eski surumden ~450 MB olu dosya kaliyordu -- ve
+; _internal sys.path'te oldugu icin eski bir yt_dlp kopyasi orada durmamali.
+; Ikisi de her kurulumda tamamen yeniden yaziliyor, iclerinde kullanici
+; verisi yok (indirmeler {app}\downloads altinda, o korunuyor).
+Type: filesandordirs; Name: "{app}\_internal"
+Type: filesandordirs; Name: "{app}\ffmpeg"
+
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
