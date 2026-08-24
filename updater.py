@@ -151,7 +151,42 @@ def activate():
         return yt_dlp
 
 
+def _version_from_dir(pkg_dir):
+    """yt_dlp/version.py icindeki __version__'u dosyadan oku."""
+    try:
+        with open(os.path.join(pkg_dir, "version.py"), "r", encoding="utf-8") as f:
+            m = re.search(r"^__version__\s*=\s*['\"]([^'\"]+)", f.read(), re.M)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
 def installed_ytdlp_version():
+    """Yuklu (ya da yuklenecek) yt-dlp surumu.
+
+    DIKKAT: acilista bu, yt_dlp import edilmeden ONCE cagrilir. Sadece
+    `import yt_dlp` denemek o asamada None dondurur; o zaman surum
+    karsilastirmasi atlanir ve guncel olsa bile her gun bosuna ~9,5 MB
+    indirilir. Bu yuzden import yoksa surum dogrudan dosyadan okunur --
+    activate() ile ayni oncelik sirasiyla.
+    """
+    mod = sys.modules.get("yt_dlp")
+    if mod is not None:
+        try:
+            return mod.version.__version__
+        except Exception:
+            pass
+
+    for d in (user_runtime_dir(), bundled_runtime_dir()):
+        if not d:
+            continue
+        pkg = os.path.join(d, "yt_dlp")
+        if _looks_like_ytdlp(pkg):
+            v = _version_from_dir(pkg)
+            if v:
+                return v
+
+    # Gelistirme modu: site-packages'taki kopya
     try:
         import yt_dlp
         return yt_dlp.version.__version__
