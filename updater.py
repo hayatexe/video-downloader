@@ -17,6 +17,7 @@ DIKKAT: activate() `import yt_dlp` YAPILMADAN ONCE cagrilmalidir. app.py bunu
 kendi ilk satirlarinda yapar.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -27,7 +28,7 @@ import time
 import urllib.request
 import zipfile
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 
 GITHUB_REPO = "hayatexe/video-downloader"
 PYPI_YTDLP_JSON = "https://pypi.org/pypi/yt-dlp/json"
@@ -302,47 +303,91 @@ def flag_ytdlp_stale():
 # --------------------------------------------------------------------------
 
 def latest_app_release():
-    """GitHub'daki son surumu dondurur: (surum, installer_url, notlar)."""
+    """GitHub'daki son surum: (surum, installer_url, sha256_url, notlar)."""
     data = _get_json(GITHUB_LATEST_RELEASE)
     tag = (data.get("tag_name") or "").lstrip("vV")
     url = None
+    sha_url = None
     for a in data.get("assets", []):
-        if a.get("name", "").lower().endswith(".exe"):
+        name = (a.get("name") or "").lower()
+        if name.endswith(".exe") and url is None:
             url = a.get("browser_download_url")
-            break
-    return tag, url, data.get("body") or ""
+        elif "sha256" in name and sha_url is None:
+            sha_url = a.get("browser_download_url")
+    return tag, url, sha_url, data.get("body") or ""
 
 
 def app_update_available():
     """Yeni uygulama surumu varsa bilgi sozlugu, yoksa None."""
     try:
-        tag, url, notes = latest_app_release()
+        tag, url, sha_url, notes = latest_app_release()
     except Exception:
         return None
     if not tag or not url:
         return None
     if _version_tuple(tag) <= _version_tuple(APP_VERSION):
         return None
-    return {"version": tag, "url": url, "notes": notes, "current": APP_VERSION}
+    return {"version": tag, "url": url, "sha256_url": sha_url,
+            "notes": notes, "current": APP_VERSION}
 
 
-def download_app_installer(url, progress=None):
-    """Kurulum dosyasini indirir, gecici yolunu dondurur."""
+def _expected_sha256(sha256_url):
+    """Yayindaki SHA256SUMS dosyasindan saglama toplamini oku."""
+    text = _get(sha256_url, timeout=30).decode("utf-8", "replace")
+    m = re.search(r"\b([0-9a-fA-F]{64})\b", text)
+    return m.group(1).lower() if m else None
+
+
+def download_app_installer(url, sha256_url=None, progress=None):
+    """Kurulum dosyasini indirip DOGRULAR, gecici yolunu dondurur.
+
+    Dogrulama neden sart: bu dosyayi uygulama kendisi indirip calistiriyor.
+    urllib ile inen dosyaya Windows "Mark-of-the-Web" isareti konmadigi icin
+    SmartScreen devreye girmez -- yani isletim sisteminden gelen hicbir
+    kontrol yok. Butunlugu dogrulayan tek sey burasi.
+
+    Saglama toplami bulunamazsa guncelleme YAPILMAZ (dogrulanmamis bir exe
+    calistirmaktansa guncellememek yegdir).
+    """
+    if not sha256_url:
+        raise RuntimeError("yayinda SHA256 dosyasi yok, guncelleme durduruldu")
+
+    expected = _expected_sha256(sha256_url)
+    if not expected:
+        raise RuntimeError("SHA256 dosyasi okunamadi, guncelleme durduruldu")
+
     dest = os.path.join(tempfile.gettempdir(),
                         "VideoDownloaderSetup-%s.exe" % int(time.time()))
+    digest = hashlib.sha256()
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        total = int(r.headers.get("Content-Length") or 0)
-        done = 0
-        with open(dest, "wb") as f:
-            while True:
-                chunk = r.read(256 * 1024)
-                if not chunk:
-                    break
-                f.write(chunk)
-                done += len(chunk)
-                if progress and total:
-                    progress(done * 100.0 / total)
-    if os.path.getsize(dest) < 1024 * 1024:
-        raise RuntimeError("indirilen kurulum dosyasi cok kucuk")
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            total = int(r.headers.get("Content-Length") or 0)
+            done = 0
+            with open(dest, "wb") as f:
+                while True:
+                    chunk = r.read(256 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    digest.update(chunk)
+                    done += len(chunk)
+                    if progress and total:
+                        progress(done * 100.0 / total)
+
+        got = digest.hexdigest()
+        if got != expected:
+            raise RuntimeError(
+                "saglama toplami uyusmuyor (beklenen %s..., gelen %s...)"
+                % (expected[:12], got[:12]))
+        if os.path.getsize(dest) < 1024 * 1024:
+            raise RuntimeError("indirilen kurulum dosyasi cok kucuk")
+    except Exception:
+        # Dogrulanmamis dosyayi diskte birakma
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        raise
+
     return dest

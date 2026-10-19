@@ -1,0 +1,38 @@
+# Windows surum kaynagi (PyInstaller --version-file).
+#
+# Neden var: meta verisi olmayan bir exe, Dosya > Ozellikler'de bos gorunur ve
+# SmartScreen penceresinde yalnizca dosya adi yazar. Bu bilgiyle pencere
+# "Uygulama: Video Downloader" diyebiliyor. Uyariyi KALDIRMAZ (onun icin kod
+# imzasi gerekir) ama ilk kurulumda ne oldugu anlasilir olur.
+#
+# filevers/prodvers 4 sayilik olmak zorunda. Surum degisince updater.APP_VERSION
+# ve installer.iss MyAppVersion ile birlikte guncellenmeli.
+
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(1, 2, 1, 0),
+    prodvers=(1, 2, 1, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo(
+      [
+      StringTable(
+        u'040904B0',
+        [StringStruct(u'CompanyName', u'hayatexe'),
+        StringStruct(u'FileDescription', u'Video Downloader'),
+        StringStruct(u'FileVersion', u'1.2.1.0'),
+        StringStruct(u'InternalName', u'VideoDownloader'),
+        StringStruct(u'LegalCopyright', u'GPL-3.0 (FFmpeg GPL derlemesi icerir)'),
+        StringStruct(u'OriginalFilename', u'Video Downloader.exe'),
+        StringStruct(u'ProductName', u'Video Downloader'),
+        StringStruct(u'ProductVersion', u'1.2.1.0')])
+      ]),
+    VarFileInfo([VarStruct(u'Translation', [0x0409, 1200])])
+  ]
+)

@@ -3,13 +3,26 @@
 ; Derleme: ISCC.exe installer.iss
 
 #define MyAppName "Video Downloader"
-#define MyAppVersion "1.2.0"
+#define MyAppVersion "1.2.1"
+#define MyAppPublisher "hayatexe"
+#define MyAppURL "https://github.com/hayatexe/video-downloader"
 #define MyAppExeName "Video Downloader.exe"
 
 [Setup]
 AppId={{9C4E6A2F-3B7D-4E8A-9F1C-2B8D51E04A67}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}/issues
+AppUpdatesURL={#MyAppURL}/releases
+; Kurulum exe'sinin kendi meta verisi. Imzasiz oldugu icin SmartScreen
+; "yayinci bilinmiyor" diyecek, ama dosya adi yerine duzgun bir uygulama
+; adi ve surum gostermesini sagliyor.
+VersionInfoVersion={#MyAppVersion}
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoDescription={#MyAppName} Kurulum
+VersionInfoProductName={#MyAppName}
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DisableProgramGroupPage=yes
 DisableDirPage=yes

@@ -7,10 +7,35 @@ tek bir kurulum dosyası olarak dağıtılır.
 ## Kurulum
 
 [Releases](../../releases/latest) sayfasından `Video Downloader Kurulum.exe`
-dosyasını indirip çalıştırın.
+dosyasını indirip çalıştırın. Yönetici izni gerekmez; kendi kullanıcı
+klasörünüze kurulur.
 
-> Uygulama kod imzası taşımadığı için Windows SmartScreen bir uyarı gösterebilir.
-> **Daha fazla bilgi → Yine de çalıştır** ile devam edebilirsiniz.
+### Windows SmartScreen uyarısı
+
+İlk kurulumda **"Windows bilgisayarınızı korudu"** uyarısı çıkar.
+**Daha fazla bilgi → Yine de çalıştır** ile geçebilirsiniz.
+
+Bu uyarı yalnızca **bir kez**, ilk kurulumda görünür. Sonrasındaki otomatik
+güncellemelerde çıkmaz: uyarıyı tetikleyen şey dosyanın
+*Mark-of-the-Web* işaretidir, bunu tarayıcılar indirirken ekler. Uygulamanın
+kendi güncelleyicisi dosyayı doğrudan indirdiği için o işaret konmaz.
+
+Uyarının sebebi kodun imzasız olması. İmzalamak için ücretli bir sertifika
+gerekiyor ve Microsoft'un ucuz seçeneği (Artifact Signing, ~$10/ay) bireysel
+geliştiriciler için yalnızca ABD ve Kanada'da açık. Bu yüzden şimdilik
+imzasız dağıtılıyor.
+
+### İndirdiğinizi doğrulamak
+
+Her yayında kurulum dosyasının SHA256 toplamını içeren `SHA256SUMS.txt` var.
+Karşılaştırmak için:
+
+```powershell
+Get-FileHash "Video Downloader Kurulum.exe" -Algorithm SHA256
+```
+
+Uygulamanın otomatik güncellemesi bu doğrulamayı **kendiliğinden** yapar ve
+toplam uyuşmazsa kurulumu başlatmaz.
 
 ## Özellikler
 
@@ -37,6 +62,16 @@ kez değiştirir ve eski bir yt-dlp `HTTP Error 403` ya da
 uygulamanın içine **gömülmez**; `%LOCALAPPDATA%\Video Downloader\runtime`
 altından yüklenir ve oradan güncellenir — yani indirme motorunu güncellemek
 için uygulamayı yeniden kurmanız gerekmez.
+
+Güncelleme tek başına yetmez, çünkü `HTTP Error 403`'ün çoğu **geçicidir**:
+YouTube'un verdiği imzalı indirme bağlantısı geçersizleşir. Aynı bağlantıyı
+tekrar istemek işe yaramaz — yeniden *çıkarım* gerekir, yani taze bir
+bağlantı almak. Uygulama bunu kendiliğinden yapıyor: böyle bir hatada
+indirmeyi en fazla iki kez, artan beklemeyle yeniden dener. Kalıcı hatalarda
+(video kaldırılmış vb.) boşa deneme yapmaz.
+
+Üç deneme de 403 verirse bu artık gerçekten eskimiş bir yt-dlp'ye işaret
+eder; uygulama bir sonraki açılış için güncelleme kontrolünü zorlar.
 
 İndirmeler bozulursa **Ayarlar → Güncelleme → Denetle** ile yt-dlp'yi elle de
 güncelleyebilirsiniz.
