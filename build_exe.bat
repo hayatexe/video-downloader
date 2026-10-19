@@ -59,5 +59,7 @@ echo.
 echo   Arkadaslarina atacagin dosya:
 echo   dist\Video Downloader Kurulum.exe
 echo.
-explorer dist
+echo   Kurulum simdi baslatiliyor...
+start "" "dist\Video Downloader Kurulum.exe"
+echo   (Paylasmak icin: explorer dist)
 pause

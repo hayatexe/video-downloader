@@ -59,6 +59,26 @@ Güncelleme → Denetle** ile elle de tetikleyebilirsiniz.
 > bile TikTok `Unexpected response from webpage request` verir ve uygulama bunu
 > "giriş gerekiyor" sanırdı. Artık pakete dahil ediliyor.
 
+## Sürüm çıkarma (GitHub Actions)
+
+Derleme artık kendi bilgisayarınızda yapılmak zorunda değil.
+`.github/workflows/release.yml` Windows runner'da her şeyi yapar: bağımlılıkları
+kurar, ffmpeg'i indirir, PyInstaller ile derler, `curl_cffi`'nin pakete girdiğini
+doğrular, Inno Setup ile kurulum paketini üretir ve **GitHub Release** olarak
+yayınlar.
+
+Uygulamanın otomatik güncellemesi tam da bu Release'e baktığı için (`updater.py`
+→ `/releases/latest`) yeni sürüm yayınlandığı anda kurulu uygulamalar kendini
+günceller.
+
+İki şekilde tetiklenir:
+
+* `git tag v1.3.1 && git push origin v1.3.1`
+* GitHub → **Actions → Release → Run workflow** → sürüm numarasını yazın
+
+Sürüm numarası etiketten alınır ve derleme sırasında `updater.py` ile
+`installer.iss` içine yazılır — iki dosyayı elle güncellemeyi unutma derdi yok.
+
 ## Kaynaktan çalıştırma
 
 ```
