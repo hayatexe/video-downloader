@@ -361,6 +361,7 @@ def extract_with_cookie_fallback(url, base_opts, browser_pref="auto", download=F
     if _is_stale_ytdlp_error(last_err):
         try:
             updater.flag_ytdlp_stale()
+            _refresh_ytdlp_async()
         except Exception:
             pass
 
@@ -375,6 +376,90 @@ def extract_with_cookie_fallback(url, base_opts, browser_pref="auto", download=F
 
     # Cerez cekme hatalari (DPAPI/kilit) yerine asil "giris gerekli" hatasini goster
     raise login_err or last_err
+
+
+_ytdlp_refreshing = threading.Lock()
+_ytdlp_refreshed = False
+
+
+def _refresh_ytdlp_async():
+    """Cikarim hatasi alindiginda yt-dlp'yi hemen arka planda guncelle.
+
+    Eskiden sadece "bir sonraki acilista bak" diye isaretleniyordu; boylece
+    kullanici uygulamayi kapatip acana kadar indirme bozuk kaliyordu. Yeni
+    surum yine bir sonraki acilista devreye girer (yt_dlp zaten import
+    edilmis durumda) ama indirme simdi yapilir.
+    """
+    global _ytdlp_refreshed
+    with _ytdlp_refreshing:
+        if _ytdlp_refreshed:
+            return
+        _ytdlp_refreshed = True
+
+    def worker():
+        try:
+            changed, message = updater.update_ytdlp(force=True)
+            # Penceresiz derlemede sys.stdout None olabilir; print patlamasin
+            if sys.stdout is not None:
+                print("[guncelleme] yt-dlp (otomatik):", message)
+        except Exception:
+            pass
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def friendly_error(error_msg, url=""):
+    """yt-dlp hatasini anlasilir bir Turkce mesaja cevir.
+
+    Dondurur: (mesaj, ek_alanlar). Ek alanlar giris akisi icin
+    needs_login/login_url gibi bilgileri tasiyabilir.
+    """
+    msg = str(error_msg)
+    low = msg.lower()
+
+    if "unsupported url" in low:
+        return "Bu URL desteklenmiyor.", {}
+    if "private video" in low or "this video is private" in low:
+        return "Bu video gizli (private).", {}
+    if "members-only" in low or "members only" in low or "join this channel" in low:
+        return "Bu içerik yalnızca kanal üyelerine açık.", {}
+    if any(k in low for k in ("requires payment", "purchase this", "rental",
+                              "paid members", "buy or rent")):
+        return "Bu içerik ücretli; satın alınmadan indirilemez.", {}
+    if "age" in low and ("confirm your age" in low or "age-restricted" in low
+                         or "age restricted" in low):
+        info = detect_login_platform(url)
+        return (f"Yaş sınırlı içerik. {info['platform']} hesabınızla giriş yapmanız gerekiyor.",
+                {"needs_login": True, "login_platform": info["platform"],
+                 "login_url": info["login_url"]})
+    if _is_ip_block_error(msg):
+        return ("Bu içeriğe bulunduğunuz IP/bölgeden erişim engellenmiş. "
+                "Giriş yapmak bunu çözmez."), {}
+    if "tarayıcı taklidi" in msg:
+        # extract_with_cookie_fallback'in kendi mesaji; oldugu gibi gecsin
+        return msg, {}
+    if _is_login_error(msg):
+        info = detect_login_platform(url)
+        return (f"Bu içerik {info['platform']} girişi gerektiriyor.",
+                {"needs_login": True, "login_platform": info["platform"],
+                 "login_url": info["login_url"]})
+    if "video unavailable" in low or "no longer available" in low \
+            or "has been removed" in low or "this video has been deleted" in low:
+        return "Bu video kaldırılmış ya da mevcut değil.", {}
+    if "requested format is not available" in low or "no video formats" in low:
+        return ("Seçtiğiniz kalite bu video için yok. Farklı bir kalite deneyin."), {}
+    if "ffmpeg" in low and ("not found" in low or "bulunamadi" in low):
+        return ("ffmpeg bulunamadı. Ses dönüştürme ve video+ses birleştirme "
+                "için gerekli; uygulamayı yeniden kurmak sorunu çözer."), {}
+    if any(k in low for k in ("unable to download webpage", "timed out",
+                              "connection reset", "temporary failure in name resolution",
+                              "getaddrinfo failed", "network is unreachable")):
+        return "İnternet bağlantısı kurulamadı. Bağlantınızı kontrol edip tekrar deneyin.", {}
+    if "unable to extract" in low or "unexpected response" in low:
+        return ("İndirme motoru bu siteyi okuyamadı. yt-dlp güncellemesi arka planda "
+                "alınıyor; birazdan tekrar deneyin."), {}
+
+    return f"Hata: {msg[:200]}", {}
 
 
 def clean_filename(filename):
@@ -656,28 +741,8 @@ def get_video_info():
         return jsonify(result)
 
     except yt_dlp.utils.DownloadError as e:
-        error_msg = str(e)
-        if "Unsupported URL" in error_msg:
-            return jsonify({"error": "Bu URL desteklenmiyor"}), 400
-        elif "Private video" in error_msg:
-            return jsonify({"error": "Bu video gizli (private)"}), 400
-        elif _is_ip_block_error(error_msg):
-            return jsonify({
-                "error": "Bu içeriğe bulunduğunuz IP/bölgeden erişim engellenmiş. "
-                         "Giriş yapmak bunu çözmez."
-            }), 400
-        elif _is_login_error(error_msg):
-            info_login = detect_login_platform(url)
-            return jsonify({
-                "error": f"Bu içerik {info_login['platform']} girişi gerektiriyor.",
-                "needs_login": True,
-                "login_platform": info_login["platform"],
-                "login_url": info_login["login_url"],
-            }), 400
-        elif "Video unavailable" in error_msg:
-            return jsonify({"error": "Bu video mevcut değil"}), 400
-        else:
-            return jsonify({"error": f"Hata: {error_msg[:200]}"}), 400
+        message, extra = friendly_error(e, url)
+        return jsonify({"error": message, **extra}), 400
     except Exception as e:
         return jsonify({"error": f"Beklenmeyen hata: {str(e)[:200]}"}), 500
 
@@ -866,13 +931,7 @@ def download_video():
                         }
                     return
 
-            if _is_ip_block_error(error_str):
-                error_str = ("Bu içeriğe bulunduğunuz IP/bölgeden erişim engellenmiş. "
-                             "Giriş yapmak bunu çözmez.")
-            elif _is_login_error(error_str):
-                _lp = detect_login_platform(url)
-                error_str = (f"Bu içerik {_lp['platform']} girişi gerektiriyor. "
-                             f"{_lp['platform']} hesabınıza giriş yapıp tekrar deneyin.")
+            error_str = friendly_error(error_str, url)[0]
 
             with progress_lock:
                 download_progress[task_id] = {
@@ -956,13 +1015,40 @@ _app_update_info = None
 _app_update_lock = threading.Lock()
 
 
+def _has_active_download():
+    with progress_lock:
+        return any(p.get("status") in ("starting", "downloading", "processing")
+                   for p in download_progress.values())
+
+
 def check_app_update_async():
-    """Uygulama guncellemesini arka planda kontrol et (acilisi geciktirmesin)."""
+    """Uygulama guncellemesini arka planda kontrol et (acilisi geciktirmesin).
+
+    Otomatik guncelleme acikken kurulum dosyasi da sessizce indirilir; bir
+    sonraki acilista launcher onu kurar. Indirme kullanicinin indirmeleriyle
+    yarismasin diye once bos ana beklenir.
+    """
     def worker():
         global _app_update_info
         info = updater.app_update_available()
         with _app_update_lock:
             _app_update_info = info
+        if not info or not updater.get_auto_update():
+            return
+
+        # Aktif indirme varken ~70 MB'lik kurulumu cekmeyelim; 30 dk boyunca
+        # bos an kollanir, bulunamazsa bir sonraki aciliSta tekrar denenir.
+        for _ in range(60):
+            if not _has_active_download():
+                break
+            time.sleep(30)
+        else:
+            return
+
+        try:
+            updater.stage_app_update(info)
+        except Exception:
+            pass
 
     threading.Thread(target=worker, daemon=True).start()
 
@@ -979,13 +1065,26 @@ def update_status():
     except Exception:
         source, updatable = None, False
 
+    staged = updater.staged_update()
     return jsonify({
         "app_version": updater.APP_VERSION,
         "ytdlp_version": updater.installed_ytdlp_version(),
         "ytdlp_source": source,
         "ytdlp_updatable": updatable,
         "app_update": info,
+        "auto_update": updater.get_auto_update(),
+        "staged_version": staged["version"] if staged else None,
+        # curl_cffi eksikse TikTok/Instagram cikarimi calismaz; kullanici
+        # bunu Ayarlar'da gormeli.
+        "impersonation": has_impersonate_support(),
     })
+
+
+@app.route("/api/update/auto", methods=["POST"])
+def set_auto_update_route():
+    """Otomatik guncelleme anahtari."""
+    enabled = bool((request.json or {}).get("enabled", True))
+    return jsonify({"auto_update": updater.set_auto_update(enabled)})
 
 
 @app.route("/api/update/ytdlp", methods=["POST"])
@@ -1001,13 +1100,18 @@ def update_app_now():
     """Kurulum dosyasini indirip calistirir; uygulama kapanir."""
     with _app_update_lock:
         info = _app_update_info
-    if not info:
-        return jsonify({"error": "Guncelleme yok"}), 400
 
-    try:
-        path = updater.download_app_installer(info["url"])
-    except Exception as e:
-        return jsonify({"error": "Indirilemedi: %s" % e}), 500
+    # Otomatik guncelleme zaten indirmis olabilir; o zaman tekrar indirme.
+    staged = updater.staged_update()
+    if staged:
+        path = staged["path"]
+    elif not info:
+        return jsonify({"error": "Guncelleme yok"}), 400
+    else:
+        try:
+            path = updater.download_app_installer(info["url"])
+        except Exception as e:
+            return jsonify({"error": "Indirilemedi: %s" % e}), 500
 
     # Kurulum sihirbazini baslat, sonra uygulamadan cik ki dosyalar serbest kalsin
     def launch():

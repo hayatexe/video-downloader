@@ -26,8 +26,11 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!s.app_update) return;
             if (localStorage.getItem('vd_update_seen') === s.app_update.version) return;
             localStorage.setItem('vd_update_seen', s.app_update.version);
-            showToast('Yeni sürüm var: v' + s.app_update.version +
-                      ' — Ayarlar\'dan güncelleyebilirsiniz', 'info');
+            // Otomatik guncelleme acikken kullaniciya is dusmuyor; sadece bilgi ver.
+            showToast(s.auto_update !== false
+                ? 'v' + s.app_update.version + ' indiriliyor — bir dahaki açılışta kurulacak'
+                : 'Yeni sürüm var: v' + s.app_update.version +
+                  ' — Ayarlar\'dan güncelleyebilirsiniz', 'info');
         } catch (e) { /* cevrimdisi */ }
     }, 6000);
 
@@ -116,15 +119,30 @@ async function refreshUpdateStatus() {
         // Paket ici kopya guncellenemez; kullaniciya bunu belli et
         ytLabel.title = s.ytdlp_source || '';
 
+        document.getElementById('autoUpdateToggle').checked = s.auto_update !== false;
+        document.getElementById('impersonationWarn').style.display =
+            s.impersonation === false ? '' : 'none';
+
         appUpdateInfo = s.app_update;
         const btn = document.getElementById('appUpdateBtn');
-        if (appUpdateInfo) {
+        const hint = document.getElementById('updateHint');
+        if (s.staged_version) {
+            // Otomatik guncelleme indirmeyi bitirmis: kurulum bir sonraki
+            // acilista kendiliginden yapilacak.
+            btn.style.display = '';
+            btn.classList.add('is-highlight');
+            btn.textContent = 'Şimdi kur';
+            hint.textContent = 'v' + s.staged_version + ' indirildi. Uygulamayı ' +
+                'bir dahaki açışınızda kendiliğinden kurulacak.';
+        } else if (appUpdateInfo) {
             btn.style.display = '';
             btn.classList.add('is-highlight');
             btn.textContent = 'v' + appUpdateInfo.version + ' yükle';
-            document.getElementById('updateHint').textContent =
-                'Yeni sürüm hazır: v' + appUpdateInfo.version +
-                '. İndirilip kurulum başlatılacak, uygulama kapanacak.';
+            hint.textContent = s.auto_update === false
+                ? 'Yeni sürüm hazır: v' + appUpdateInfo.version +
+                  '. İndirilip kurulum başlatılacak, uygulama kapanacak.'
+                : 'Yeni sürüm indiriliyor: v' + appUpdateInfo.version +
+                  '. İndirme bitince bir dahaki açılışta kurulacak.';
         } else {
             btn.style.display = 'none';
         }
@@ -186,6 +204,22 @@ function changeTheme() {
     localStorage.setItem('vd_theme', theme);
     document.body.setAttribute('data-theme', theme);
 }
+async function toggleAutoUpdate() {
+    const enabled = document.getElementById('autoUpdateToggle').checked;
+    try {
+        await fetch('/api/update/auto', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+        showToast(enabled
+            ? 'Güncellemeler otomatik kurulacak'
+            : 'Otomatik güncelleme kapatıldı', 'info');
+    } catch (e) {
+        showToast('Ayar kaydedilemedi', 'error');
+    }
+}
+
 function toggleTray() {
     const isTray = document.getElementById('trayToggle').checked;
     localStorage.setItem('vd_tray', isTray);

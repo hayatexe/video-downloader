@@ -745,3 +745,9 @@ input:checked + .slider:before { transform: translateX(20px); }
 [data-theme="light"] .video-overlay {
     background: linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 50%);
 }
+
+
+/* Ayarlar: eksik bagimlilik uyarisi */
+.update-hint.update-warn {
+    color: #f87171;
+}

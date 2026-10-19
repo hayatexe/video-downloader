@@ -3,7 +3,7 @@
 ; Derleme: ISCC.exe installer.iss
 
 #define MyAppName "Video Downloader"
-#define MyAppVersion "1.2.0"
+#define MyAppVersion "1.3.0"
 #define MyAppExeName "Video Downloader.exe"
 
 [Setup]

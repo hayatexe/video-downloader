@@ -28,8 +28,19 @@ Uygulamanın iki ayrı güncelleme kanalı vardır:
 
 | Kanal | Boyut | Ne zaman | Nasıl |
 |---|---|---|---|
-| **yt-dlp** | ~3 MB | Günde bir kez, açılışta | Sessiz, otomatik |
-| **Uygulama** | ~70 MB | Yeni sürüm çıktığında | Sorar, onay sonrası kurar |
+| **yt-dlp** | ~3 MB | Günde bir kez (açılışta) + indirme bozulduğu an | Sessiz, otomatik |
+| **Uygulama** | ~70 MB | Yeni sürüm çıktığında | Arka planda iner, **bir sonraki açılışta sessizce kurulur** |
+
+Uygulama kanalı artık hiçbir şey sormaz: siz indirme yaparken yeni sürümün
+kurulum dosyası arka planda (boş bir anda) `%LOCALAPPDATA%\Video Downloader\updates`
+altına iner. Uygulamayı bir dahaki açışınızda açılış ekranı "Güncelleme
+kuruluyor" der, kurulum sessizce (`/VERYSILENT`) yapılır ve uygulama kendini
+yeniden açar. Toplam gecikme birkaç saniyedir.
+
+Kurulum iki kez denenip de sürüm değişmezse otomatik kurulumdan vazgeçilir
+(açılış döngüsüne girmemek için) ve güncelleme **Ayarlar → Güncelleme**'den
+elle kurulabilir halde bekler. Otomatik güncellemeyi **Ayarlar → Otomatik
+Güncelleme** ile kapatabilirsiniz.
 
 yt-dlp kanalı önemlidir: YouTube ve TikTok çıkarım yöntemlerini ayda birkaç
 kez değiştirir ve eski bir yt-dlp `HTTP Error 403` ya da
@@ -38,8 +49,10 @@ uygulamanın içine **gömülmez**; `%LOCALAPPDATA%\Video Downloader\runtime`
 altından yüklenir ve oradan güncellenir — yani indirme motorunu güncellemek
 için uygulamayı yeniden kurmanız gerekmez.
 
-İndirmeler bozulursa **Ayarlar → Güncelleme → Denetle** ile yt-dlp'yi elle de
-güncelleyebilirsiniz.
+Bir çıkarım hatası alındığında (`403`, `Unexpected response`) yt-dlp
+güncellemesi artık bir sonraki açılış beklenmeden **o anda** arka planda
+indirilir; yeni sürüm bir sonraki açılışta devreye girer. **Ayarlar →
+Güncelleme → Denetle** ile elle de tetikleyebilirsiniz.
 
 > **Not:** TikTok ve Instagram'ın web çıkarımı `curl_cffi` ile yapılan tarayıcı
 > taklidine (impersonation) ihtiyaç duyar. Bu paket eksikse yt-dlp güncel olsa

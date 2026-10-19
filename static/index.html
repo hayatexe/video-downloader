@@ -43,6 +43,14 @@
                     </label>
                 </div>
 
+                <div class="setting-item">
+                    <label>Otomatik Güncelleme</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="autoUpdateToggle" onchange="toggleAutoUpdate()" checked>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
                 <div class="setting-item setting-item-stack">
                     <label>Güncelleme</label>
                     <div class="update-rows">
@@ -58,6 +66,9 @@
                         </div>
                     </div>
                     <p class="update-hint" id="updateHint">YouTube veya TikTok indirmeleri bozulursa buradan yt-dlp'yi güncelleyin.</p>
+                    <p class="update-hint update-warn" id="impersonationWarn" style="display:none;">
+                        Tarayıcı taklidi (curl_cffi) eksik — TikTok ve Instagram indirmeleri çalışmayabilir.
+                    </p>
                 </div>
             </div>
         </div>
