@@ -190,6 +190,52 @@ def _cookie_browser_candidates():
     return [name for name, path in checks if os.path.isdir(path)]
 
 
+_impersonate_support = None
+
+
+def has_impersonate_support():
+    """curl_cffi kurulu mu? TikTok/Instagram web cikarimi bu olmadan
+    TLS parmak izi kontrolune takilir ve 'Unexpected response' doner."""
+    global _impersonate_support
+    if _impersonate_support is None:
+        try:
+            import curl_cffi  # noqa: F401
+            from yt_dlp.networking.impersonate import ImpersonateTarget  # noqa: F401
+            _impersonate_support = True
+        except Exception:
+            _impersonate_support = False
+    return _impersonate_support
+
+
+# Giris penceresinde acilacak sayfalar. Daha once her platformda Instagram
+# giris sayfasi aciliyordu; TikTok linkinde Instagram'a giris yapmak
+# ise yaramiyordu.
+LOGIN_PLATFORMS = [
+    (r'(?://|\.)instagram\.com', "Instagram", "https://www.instagram.com/accounts/login/"),
+    (r'(?://|\.)tiktok\.com', "TikTok", "https://www.tiktok.com/login"),
+    (r'(?://|\.)(?:youtube\.com|youtu\.be)', "YouTube",
+     "https://accounts.google.com/ServiceLogin?service=youtube"),
+    (r'(?://|\.)(?:twitter\.com|x\.com)', "X (Twitter)", "https://x.com/i/flow/login"),
+    (r'(?://|\.)facebook\.com', "Facebook", "https://www.facebook.com/login/"),
+    (r'(?://|\.)reddit\.com', "Reddit", "https://www.reddit.com/login/"),
+    (r'(?://|\.)twitch\.tv', "Twitch", "https://www.twitch.tv/login"),
+]
+
+
+def detect_login_platform(url):
+    """URL'ye gore giris yapilacak platformu ve giris sayfasini dondur."""
+    for pattern, label, login_url in LOGIN_PLATFORMS:
+        if re.search(pattern, url or "", re.IGNORECASE):
+            return {"platform": label, "login_url": login_url}
+    host = ""
+    m = re.match(r'https?://([^/]+)', url or "", re.IGNORECASE)
+    if m:
+        host = m.group(1)
+    if host:
+        return {"platform": host.replace("www.", ""), "login_url": f"https://{host}/"}
+    return {"platform": "Platform", "login_url": ""}
+
+
 def _is_login_error(msg):
     m = str(msg).lower()
     return any(k in m for k in (
@@ -211,7 +257,7 @@ _working_tiktok_host = None
 
 
 def _is_tiktok_url(url):
-    return re.search(r'(?:^|\.)tiktok\.com/', url or "", re.IGNORECASE) is not None
+    return re.search(r'(?://|\.)tiktok\.com/', url or "", re.IGNORECASE) is not None
 
 
 def _is_extractor_response_error(msg):
@@ -221,6 +267,15 @@ def _is_extractor_response_error(msg):
         "unexpected response from webpage request",
         "unable to extract webpage video data",
         "unable to extract video data",
+    ))
+
+
+def _is_ip_block_error(msg):
+    """Giris ile cozulmeyen IP/bolge engeli."""
+    m = str(msg).lower()
+    return any(k in m for k in (
+        "ip address is blocked", "blocked from accessing",
+        "not available in your country", "geo restricted", "geo-restricted",
     ))
 
 
@@ -308,6 +363,15 @@ def extract_with_cookie_fallback(url, base_opts, browser_pref="auto", download=F
             updater.flag_ytdlp_stale()
         except Exception:
             pass
+
+    # curl_cffi yoksa TikTok/Instagram web cikarimi TLS parmak izi kontrolune
+    # takilir. Bu "giris gerekli" degildir; giris penceresi acmak cozmez.
+    if _is_extractor_response_error(last_err) and not has_impersonate_support():
+        raise yt_dlp.utils.DownloadError(
+            "Bu platform için gereken tarayıcı taklidi (impersonation) desteği "
+            "eksik. Uygulamanın yeni sürümünü kurun; kaynaktan çalıştırıyorsanız "
+            "'pip install curl_cffi' komutunu çalıştırın."
+        )
 
     # Cerez cekme hatalari (DPAPI/kilit) yerine asil "giris gerekli" hatasini goster
     raise login_err or last_err
@@ -597,10 +661,18 @@ def get_video_info():
             return jsonify({"error": "Bu URL desteklenmiyor"}), 400
         elif "Private video" in error_msg:
             return jsonify({"error": "Bu video gizli (private)"}), 400
-        elif _is_login_error(error_msg):
+        elif _is_ip_block_error(error_msg):
             return jsonify({
-                "error": "Bu içerik giriş gerektiriyor.",
-                "needs_login": True
+                "error": "Bu içeriğe bulunduğunuz IP/bölgeden erişim engellenmiş. "
+                         "Giriş yapmak bunu çözmez."
+            }), 400
+        elif _is_login_error(error_msg):
+            info_login = detect_login_platform(url)
+            return jsonify({
+                "error": f"Bu içerik {info_login['platform']} girişi gerektiriyor.",
+                "needs_login": True,
+                "login_platform": info_login["platform"],
+                "login_url": info_login["login_url"],
             }), 400
         elif "Video unavailable" in error_msg:
             return jsonify({"error": "Bu video mevcut değil"}), 400
@@ -794,9 +866,13 @@ def download_video():
                         }
                     return
 
-            if _is_login_error(error_str):
-                error_str = ("Bu içerik giriş gerektiriyor. Tarayıcınızda bu platforma "
-                             "giriş yapıp tekrar deneyin.")
+            if _is_ip_block_error(error_str):
+                error_str = ("Bu içeriğe bulunduğunuz IP/bölgeden erişim engellenmiş. "
+                             "Giriş yapmak bunu çözmez.")
+            elif _is_login_error(error_str):
+                _lp = detect_login_platform(url)
+                error_str = (f"Bu içerik {_lp['platform']} girişi gerektiriyor. "
+                             f"{_lp['platform']} hesabınıza giriş yapıp tekrar deneyin.")
 
             with progress_lock:
                 download_progress[task_id] = {

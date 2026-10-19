@@ -41,6 +41,11 @@ için uygulamayı yeniden kurmanız gerekmez.
 İndirmeler bozulursa **Ayarlar → Güncelleme → Denetle** ile yt-dlp'yi elle de
 güncelleyebilirsiniz.
 
+> **Not:** TikTok ve Instagram'ın web çıkarımı `curl_cffi` ile yapılan tarayıcı
+> taklidine (impersonation) ihtiyaç duyar. Bu paket eksikse yt-dlp güncel olsa
+> bile TikTok `Unexpected response from webpage request` verir ve uygulama bunu
+> "giriş gerekiyor" sanırdı. Artık pakete dahil ediliyor.
+
 ## Kaynaktan çalıştırma
 
 ```

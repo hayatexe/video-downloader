@@ -31,6 +31,14 @@ tmp_ret = collect_all('yt_dlp')
 binaries += tmp_ret[1]
 hiddenimports += tmp_ret[2]
 
+# curl_cffi: TikTok/Instagram web cikarimi icin gereken impersonation destegi.
+# yt-dlp hook'u bazen kacirabiliyor; eksik olunca TikTok "Unexpected response
+# from webpage request" verip giris gerekiyormus gibi gorunuyordu.
+_cc_ret = collect_all('curl_cffi')
+datas += _cc_ret[0]
+binaries += _cc_ret[1]
+hiddenimports += _cc_ret[2]
+
 import yt_dlp as _ytdlp_pkg
 _ytdlp_src = os.path.dirname(_ytdlp_pkg.__file__)
 for _root, _dirs, _files in os.walk(_ytdlp_src):

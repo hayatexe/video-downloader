@@ -15,7 +15,7 @@ if errorlevel 1 (
 )
 
 echo [1/3] Gerekli araclar yukleniyor...
-py -3 -m pip install --quiet --upgrade pyinstaller "pywebview>=5.3" pystray pillow flask flask-cors yt-dlp
+py -3 -m pip install --quiet --upgrade pyinstaller "pywebview>=5.3" pystray pillow flask flask-cors yt-dlp "curl_cffi>=0.7.4"
 if errorlevel 1 ( echo Yuklenemedi! & pause & exit /b 1 )
 
 echo [2/3] Uygulama derleniyor... (onedir modu: hizli acilis)

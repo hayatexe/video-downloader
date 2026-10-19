@@ -214,26 +214,33 @@ function showToast(message, type = 'info') {
     }, 4000);
 }
 
-// ===== LOGIN PROMPT (Instagram vb. giriş gerektiren içerik) =====
-function showLoginPrompt() {
+// ===== LOGIN PROMPT (giriş gerektiren içerik) =====
+// Giriş sayfası linkin platformuna göre açılır; TikTok linkinde Instagram
+// giriş sayfası açmak işe yaramıyordu.
+function showLoginPrompt(data) {
+    const platform = (data && data.login_platform) || 'Platform';
+    const loginUrl = (data && data.login_url) || '';
     const container = document.getElementById('toastContainer');
     const t = document.createElement('div');
     t.className = 'toast toast-info';
     t.style.flexWrap = 'wrap';
-    t.innerHTML = `
-        <span>Bu içerik giriş gerektiriyor.</span>
-        <button onclick="openLoginWindow(this)" style="margin-left:8px;padding:6px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,#8b5cf6,#6366f1);color:#fff;cursor:pointer;font-weight:600;font-size:13px;">
-            Instagram'a Giriş Yap
-        </button>`;
+    const btn = document.createElement('button');
+    btn.textContent = `${platform} Giriş Yap`;
+    btn.style.cssText = 'margin-left:8px;padding:6px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,#8b5cf6,#6366f1);color:#fff;cursor:pointer;font-weight:600;font-size:13px;';
+    btn.onclick = () => openLoginWindow(btn, loginUrl);
+    const span = document.createElement('span');
+    span.textContent = `Bu içerik ${platform} girişi gerektiriyor.`;
+    t.appendChild(span);
+    t.appendChild(btn);
     container.appendChild(t);
     setTimeout(() => t.remove(), 60000);
 }
 
-async function openLoginWindow(btn) {
+async function openLoginWindow(btn, loginUrl) {
     if (btn && btn.parentElement) btn.parentElement.remove();
     showToast('Giriş penceresi açıldı. Giriş yaptıktan sonra o pencereyi kapatın.', 'info');
     try {
-        await window.pywebview.api.open_login('https://www.instagram.com/accounts/login/');
+        await window.pywebview.api.open_login(loginUrl || '');
         showToast('Giriş kaydedildi, video bilgisi tekrar alınıyor...', 'success');
         fetchVideoInfo();
     } catch (e) {
@@ -261,7 +268,7 @@ async function fetchVideoInfo() {
         const data = await res.json();
         if (!res.ok) {
             if (data.needs_login && window.pywebview && window.pywebview.api) {
-                showLoginPrompt();
+                showLoginPrompt(data);
             } else {
                 showToast(data.error || 'Video bilgisi alınamadı.', 'error');
             }
