@@ -343,8 +343,10 @@ def download_app_installer(url, sha256_url=None, progress=None):
 
     Dogrulama neden sart: bu dosyayi uygulama kendisi indirip calistiriyor.
     urllib ile inen dosyaya Windows "Mark-of-the-Web" isareti konmadigi icin
-    SmartScreen devreye girmez -- yani isletim sisteminden gelen hicbir
-    kontrol yok. Butunlugu dogrulayan tek sey burasi.
+    SmartScreen'in "bilinmeyen yayinci" onayi devreye girmez. (Defender'in
+    gercek zamanli taramasi yine calisir, ama o kotu amacli yazilim arar;
+    dosyanin BEKLENEN dosya olup olmadigini denetlemez.) Yani butunlugu
+    dogrulayan tek yer burasi.
 
     Saglama toplami bulunamazsa guncelleme YAPILMAZ (dogrulanmamis bir exe
     calistirmaktansa guncellememek yegdir).
