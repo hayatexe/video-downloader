@@ -254,50 +254,47 @@ function showToast(message, type = 'info') {
 function showLoginPrompt(data) {
     const platform = (data && data.login_platform) || 'Platform';
     const loginUrl = (data && data.login_url) || '';
-    // Google hesabiyla giris gomulu pencerede calismaz (Google engelliyor).
-    // O platformlarda kullaniciyi kendi tarayicisina yonlendiriyoruz;
-    // uygulama cerezleri oradan okuyor.
-    const inApp = !(data && data.login_in_app === false);
+    const hint = (data && data.login_hint) || '';
     const container = document.getElementById('toastContainer');
     const t = document.createElement('div');
     t.className = 'toast toast-info';
     t.style.flexWrap = 'wrap';
 
     const span = document.createElement('span');
-    const btn = document.createElement('button');
-    btn.style.cssText = 'margin-left:8px;padding:6px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,#8b5cf6,#6366f1);color:#fff;cursor:pointer;font-weight:600;font-size:13px;';
+    span.textContent = `Bu içerik ${platform} girişi gerektiriyor.` +
+        (hint ? ' ' + hint : '');
 
-    if (inApp) {
-        span.textContent = `Bu içerik ${platform} girişi gerektiriyor.`;
-        btn.textContent = `${platform} Giriş Yap`;
-        btn.onclick = () => openLoginWindow(btn, loginUrl, platform);
-    } else {
-        span.textContent = `${platform} gömülü pencerede girişe izin vermiyor. ` +
-            `Tarayıcınızda ${platform} hesabınıza girip tekrar deneyin — ` +
-            `uygulama çerezleri tarayıcınızdan okur.`;
-        btn.textContent = 'Tekrar dene';
-        btn.onclick = () => { t.remove(); fetchVideoInfo(); };
-    }
+    const btnStyle = 'margin-left:8px;padding:6px 14px;border-radius:8px;border:none;cursor:pointer;font-weight:600;font-size:13px;';
+    const loginBtn = document.createElement('button');
+    loginBtn.textContent = `${platform} Giriş Yap`;
+    loginBtn.style.cssText = btnStyle + 'background:linear-gradient(135deg,#8b5cf6,#6366f1);color:#fff;';
+    loginBtn.onclick = () => openLoginWindow(t, loginUrl, platform);
+
+    // Tarayicisinda zaten girisi olanlar icin kacis yolu: uygulama
+    // cerezleri kurulu tarayicilardan da okuyabiliyor.
+    const retryBtn = document.createElement('button');
+    retryBtn.textContent = 'Tarayıcımdan girdim, tekrar dene';
+    retryBtn.style.cssText = btnStyle + 'background:rgba(255,255,255,0.12);color:inherit;';
+    retryBtn.onclick = () => { t.remove(); fetchVideoInfo(); };
 
     t.appendChild(span);
-    t.appendChild(btn);
+    t.appendChild(loginBtn);
+    t.appendChild(retryBtn);
     container.appendChild(t);
-    setTimeout(() => t.remove(), 60000);
+    setTimeout(() => t.remove(), 120000);
 }
 
-async function openLoginWindow(btn, loginUrl, platform) {
-    if (btn && btn.parentElement) btn.parentElement.remove();
-    showToast('Giriş penceresi açıldı. Sosyal medya butonları (Google/Facebook/Apple) ' +
-              'bu pencerede çalışmaz — e-posta/telefon ya da QR kodu kullanın. ' +
-              'Bittiğinde pencereyi kapatın.', 'info');
+async function openLoginWindow(toast, loginUrl, platform) {
+    if (toast && toast.remove) toast.remove();
+    showToast('Giriş penceresi açıldı. Giriş yaptıktan sonra pencereyi kapatın.', 'info');
     try {
         const saved = await window.pywebview.api.open_login(loginUrl || '');
         if (saved === 0) {
-            // Pencere kapandi ama hic cerez yakalanmadi: giris yapilmamis
-            // ya da sosyal giris denenmis. Kullaniciyi bosta birakma.
-            showToast('Giriş algılanmadı. Tarayıcınızda ' + (platform || 'siteye') +
-                      ' giriş yapıp tekrar deneyin — uygulama çerezleri oradan da okur.',
-                      'error');
+            // Pencere kapandi ama hic cerez yakalanmadi: giris tamamlanmamis.
+            // Kullaniciyi bosta birakma, calisan yolu goster.
+            showToast('Giriş algılanmadı. QR kodla deneyin ya da tarayıcınızda ' +
+                      (platform || 'siteye') + ' girip tekrar deneyin — ' +
+                      'uygulama çerezleri tarayıcınızdan da okur.', 'error');
             return;
         }
         showToast('Giriş kaydedildi, video bilgisi tekrar alınıyor...', 'success');
