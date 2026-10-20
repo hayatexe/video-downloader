@@ -220,8 +220,8 @@ LOGIN_PLATFORMS = [
     (r'(?://|\.)instagram\.com', "Instagram",
      "https://www.instagram.com/accounts/login/", ""),
     (r'(?://|\.)tiktok\.com', "TikTok", "https://www.tiktok.com/login",
-     "Hesabınız Google/Facebook/Apple'a bağlıysa QR kodu kullanın: "
-     "telefonunuzdaki TikTok uygulamasıyla okutun, giriş pencerede tamamlanır."),
+     "Google/Facebook/Apple ile giriş pencerenin içinde açılır. Sorun çıkarsa "
+     "QR kodu kullanın: telefonunuzdaki TikTok uygulamasıyla okutun."),
     (r'(?://|\.)(?:youtube\.com|youtu\.be)', "YouTube",
      "https://accounts.google.com/ServiceLogin?service=youtube",
      "Google girişi bu pencerede engellenirse tarayıcınızda YouTube'a girip "
