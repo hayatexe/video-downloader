@@ -148,8 +148,12 @@ class Api:
         return True
 
     def open_login(self, url=None):
-        """Instagram vb. icin uygulama ici giris penceresi acar. Kullanici giris
-        yapip pencereyi kapatana kadar cerezler periyodik olarak kaydedilir."""
+        """Uygulama ici giris penceresi acar.
+
+        Kullanici giris yapip pencereyi kapatana kadar cerezler periyodik
+        olarak kaydedilir. Dondurur: kaydedilen cerez sayisi (0 ise giris
+        algilanmadi, arayuz kullaniciyi tarayici cerezlerine yonlendirir).
+        """
         import webview
         import app as app_module
 
@@ -167,6 +171,8 @@ class Api:
 
         login_win.events.closed += on_closed
 
+        saved = {"count": 0}
+
         def poller():
             # Her 3 sn'de mevcut sayfanin cerezlerini kaydet; giristen sonra
             # oturum cerezleri (sessionid) da yakalanmis olur.
@@ -175,14 +181,16 @@ class Api:
                 try:
                     cookies = login_win.get_cookies()
                     if cookies:
-                        app_module.save_webview_cookies(cookies)
+                        n = app_module.save_webview_cookies(cookies)
+                        if n:
+                            saved["count"] = max(saved["count"], n)
                 except Exception:
                     pass
 
         threading.Thread(target=poller, daemon=True).start()
 
         done.wait(timeout=600)
-        return True
+        return saved["count"]
 
     def save_file_dialog(self, task_id):
         import app
@@ -361,6 +369,15 @@ def main():
 
     # Sabit, kalici WebView2 profili: her acilista ayni yer, tema/gecmis korunur
     storage = os.path.join(os.environ.get('LOCALAPPDATA', APP_DIR), 'VideoDownloader')
+
+    # pywebview varsayilan olarak target=_blank / window.open isteklerini
+    # SISTEM TARAYICISINA gonderir. Giris penceresinde "Google ile devam et"
+    # gibi butonlar popup actigi icin giris kullanicinin kendi tarayicisinda
+    # aciliyor, cerezler uygulamaya hic donmuyor ve pencere oylece kaliyordu.
+    try:
+        webview.settings['OPEN_EXTERNAL_LINKS_IN_BROWSER'] = False
+    except Exception:
+        pass
 
     # Start with Edge WebView2 (built into Windows 10/11)
     try:
