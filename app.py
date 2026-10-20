@@ -210,30 +210,49 @@ def has_impersonate_support():
 # Giris penceresinde acilacak sayfalar. Daha once her platformda Instagram
 # giris sayfasi aciliyordu; TikTok linkinde Instagram'a giris yapmak
 # ise yaramiyordu.
+# (desen, ad, giris sayfasi, gomulu_pencerede_calisir_mi)
+#
+# TikTok'un /login sayfasi once "Google/Facebook/Apple ile devam et"
+# butonlarini gosteriyor. Bu butonlar popup aciyor; Google ise gomulu
+# tarayicilardan girise ZATEN izin vermiyor. Dogrudan e-posta/telefon
+# formuna gidiyoruz.
+#
+# Google hesabiyla giris (YouTube) gomulu pencerede hic calismaz; orada
+# kullaniciyi kendi tarayicisina yonlendirip cerezleri oradan okuyoruz.
 LOGIN_PLATFORMS = [
-    (r'(?://|\.)instagram\.com', "Instagram", "https://www.instagram.com/accounts/login/"),
-    (r'(?://|\.)tiktok\.com', "TikTok", "https://www.tiktok.com/login"),
+    (r'(?://|\.)instagram\.com', "Instagram",
+     "https://www.instagram.com/accounts/login/", True),
+    (r'(?://|\.)tiktok\.com', "TikTok",
+     "https://www.tiktok.com/login/phone-or-email/email", True),
     (r'(?://|\.)(?:youtube\.com|youtu\.be)', "YouTube",
-     "https://accounts.google.com/ServiceLogin?service=youtube"),
-    (r'(?://|\.)(?:twitter\.com|x\.com)', "X (Twitter)", "https://x.com/i/flow/login"),
-    (r'(?://|\.)facebook\.com', "Facebook", "https://www.facebook.com/login/"),
-    (r'(?://|\.)reddit\.com', "Reddit", "https://www.reddit.com/login/"),
-    (r'(?://|\.)twitch\.tv', "Twitch", "https://www.twitch.tv/login"),
+     "https://accounts.google.com/ServiceLogin?service=youtube", False),
+    (r'(?://|\.)(?:twitter\.com|x\.com)', "X (Twitter)",
+     "https://x.com/i/flow/login", True),
+    (r'(?://|\.)facebook\.com', "Facebook",
+     "https://www.facebook.com/login/", True),
+    (r'(?://|\.)reddit\.com', "Reddit", "https://www.reddit.com/login/", True),
+    (r'(?://|\.)twitch\.tv', "Twitch", "https://www.twitch.tv/login", True),
 ]
 
 
 def detect_login_platform(url):
-    """URL'ye gore giris yapilacak platformu ve giris sayfasini dondur."""
-    for pattern, label, login_url in LOGIN_PLATFORMS:
+    """URL'ye gore giris yapilacak platformu ve giris sayfasini dondur.
+
+    in_app=False olan platformlarda uygulama ici pencere ise yaramaz;
+    arayuz kullaniciyi kendi tarayicisinda giris yapmaya yonlendirir
+    (cerezler tarayicidan okunuyor).
+    """
+    for pattern, label, login_url, in_app in LOGIN_PLATFORMS:
         if re.search(pattern, url or "", re.IGNORECASE):
-            return {"platform": label, "login_url": login_url}
+            return {"platform": label, "login_url": login_url, "in_app": in_app}
     host = ""
     m = re.match(r'https?://([^/]+)', url or "", re.IGNORECASE)
     if m:
         host = m.group(1)
     if host:
-        return {"platform": host.replace("www.", ""), "login_url": f"https://{host}/"}
-    return {"platform": "Platform", "login_url": ""}
+        return {"platform": host.replace("www.", ""),
+                "login_url": f"https://{host}/", "in_app": True}
+    return {"platform": "Platform", "login_url": "", "in_app": False}
 
 
 def _is_login_error(msg):
@@ -470,7 +489,7 @@ def friendly_error(error_msg, url=""):
         info = detect_login_platform(url)
         return (f"Yaş sınırlı içerik. {info['platform']} hesabınızla giriş yapmanız gerekiyor.",
                 {"needs_login": True, "login_platform": info["platform"],
-                 "login_url": info["login_url"]})
+                 "login_url": info["login_url"], "login_in_app": info["in_app"]})
     if _is_ip_block_error(msg):
         return ("Bu içeriğe bulunduğunuz IP/bölgeden erişim engellenmiş. "
                 "Giriş yapmak bunu çözmez."), {}
@@ -481,7 +500,7 @@ def friendly_error(error_msg, url=""):
         info = detect_login_platform(url)
         return (f"Bu içerik {info['platform']} girişi gerektiriyor.",
                 {"needs_login": True, "login_platform": info["platform"],
-                 "login_url": info["login_url"]})
+                 "login_url": info["login_url"], "login_in_app": info["in_app"]})
     if "video unavailable" in low or "no longer available" in low \
             or "has been removed" in low or "this video has been deleted" in low:
         return "Bu video kaldırılmış ya da mevcut değil.", {}

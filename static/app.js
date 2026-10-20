@@ -254,27 +254,52 @@ function showToast(message, type = 'info') {
 function showLoginPrompt(data) {
     const platform = (data && data.login_platform) || 'Platform';
     const loginUrl = (data && data.login_url) || '';
+    // Google hesabiyla giris gomulu pencerede calismaz (Google engelliyor).
+    // O platformlarda kullaniciyi kendi tarayicisina yonlendiriyoruz;
+    // uygulama cerezleri oradan okuyor.
+    const inApp = !(data && data.login_in_app === false);
     const container = document.getElementById('toastContainer');
     const t = document.createElement('div');
     t.className = 'toast toast-info';
     t.style.flexWrap = 'wrap';
-    const btn = document.createElement('button');
-    btn.textContent = `${platform} Giriş Yap`;
-    btn.style.cssText = 'margin-left:8px;padding:6px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,#8b5cf6,#6366f1);color:#fff;cursor:pointer;font-weight:600;font-size:13px;';
-    btn.onclick = () => openLoginWindow(btn, loginUrl);
+
     const span = document.createElement('span');
-    span.textContent = `Bu içerik ${platform} girişi gerektiriyor.`;
+    const btn = document.createElement('button');
+    btn.style.cssText = 'margin-left:8px;padding:6px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,#8b5cf6,#6366f1);color:#fff;cursor:pointer;font-weight:600;font-size:13px;';
+
+    if (inApp) {
+        span.textContent = `Bu içerik ${platform} girişi gerektiriyor.`;
+        btn.textContent = `${platform} Giriş Yap`;
+        btn.onclick = () => openLoginWindow(btn, loginUrl, platform);
+    } else {
+        span.textContent = `${platform} gömülü pencerede girişe izin vermiyor. ` +
+            `Tarayıcınızda ${platform} hesabınıza girip tekrar deneyin — ` +
+            `uygulama çerezleri tarayıcınızdan okur.`;
+        btn.textContent = 'Tekrar dene';
+        btn.onclick = () => { t.remove(); fetchVideoInfo(); };
+    }
+
     t.appendChild(span);
     t.appendChild(btn);
     container.appendChild(t);
     setTimeout(() => t.remove(), 60000);
 }
 
-async function openLoginWindow(btn, loginUrl) {
+async function openLoginWindow(btn, loginUrl, platform) {
     if (btn && btn.parentElement) btn.parentElement.remove();
-    showToast('Giriş penceresi açıldı. Giriş yaptıktan sonra o pencereyi kapatın.', 'info');
+    showToast('Giriş penceresi açıldı. Sosyal medya butonları (Google/Facebook/Apple) ' +
+              'bu pencerede çalışmaz — e-posta/telefon ya da QR kodu kullanın. ' +
+              'Bittiğinde pencereyi kapatın.', 'info');
     try {
-        await window.pywebview.api.open_login(loginUrl || '');
+        const saved = await window.pywebview.api.open_login(loginUrl || '');
+        if (saved === 0) {
+            // Pencere kapandi ama hic cerez yakalanmadi: giris yapilmamis
+            // ya da sosyal giris denenmis. Kullaniciyi bosta birakma.
+            showToast('Giriş algılanmadı. Tarayıcınızda ' + (platform || 'siteye') +
+                      ' giriş yapıp tekrar deneyin — uygulama çerezleri oradan da okur.',
+                      'error');
+            return;
+        }
         showToast('Giriş kaydedildi, video bilgisi tekrar alınıyor...', 'success');
         fetchVideoInfo();
     } catch (e) {
