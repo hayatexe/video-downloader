@@ -210,49 +210,44 @@ def has_impersonate_support():
 # Giris penceresinde acilacak sayfalar. Daha once her platformda Instagram
 # giris sayfasi aciliyordu; TikTok linkinde Instagram'a giris yapmak
 # ise yaramiyordu.
-# (desen, ad, giris sayfasi, gomulu_pencerede_calisir_mi)
+# (desen, ad, giris sayfasi, ipucu)
 #
-# TikTok'un /login sayfasi once "Google/Facebook/Apple ile devam et"
-# butonlarini gosteriyor. Bu butonlar popup aciyor; Google ise gomulu
-# tarayicilardan girise ZATEN izin vermiyor. Dogrudan e-posta/telefon
-# formuna gidiyoruz.
-#
-# Google hesabiyla giris (YouTube) gomulu pencerede hic calismaz; orada
-# kullaniciyi kendi tarayicisina yonlendirip cerezleri oradan okuyoruz.
+# Giris sayfasi TAM sayfa olmali: QR kod, e-posta/telefon ve sosyal giris
+# secenekleri bir arada. Hesabi Google'a bagli olan biri icin e-posta formu
+# ise yaramaz; QR kod (telefondaki uygulamayla okut) her hesap turunde
+# calisir ve pencereden hic cikmaz.
 LOGIN_PLATFORMS = [
     (r'(?://|\.)instagram\.com', "Instagram",
-     "https://www.instagram.com/accounts/login/", True),
-    (r'(?://|\.)tiktok\.com', "TikTok",
-     "https://www.tiktok.com/login/phone-or-email/email", True),
+     "https://www.instagram.com/accounts/login/", ""),
+    (r'(?://|\.)tiktok\.com', "TikTok", "https://www.tiktok.com/login",
+     "Hesabınız Google/Facebook/Apple'a bağlıysa QR kodu kullanın: "
+     "telefonunuzdaki TikTok uygulamasıyla okutun, giriş pencerede tamamlanır."),
     (r'(?://|\.)(?:youtube\.com|youtu\.be)', "YouTube",
-     "https://accounts.google.com/ServiceLogin?service=youtube", False),
+     "https://accounts.google.com/ServiceLogin?service=youtube",
+     "Google girişi bu pencerede engellenirse tarayıcınızda YouTube'a girip "
+     "\"Tekrar dene\" deyin; uygulama çerezleri tarayıcınızdan da okur."),
     (r'(?://|\.)(?:twitter\.com|x\.com)', "X (Twitter)",
-     "https://x.com/i/flow/login", True),
+     "https://x.com/i/flow/login", ""),
     (r'(?://|\.)facebook\.com', "Facebook",
-     "https://www.facebook.com/login/", True),
-    (r'(?://|\.)reddit\.com', "Reddit", "https://www.reddit.com/login/", True),
-    (r'(?://|\.)twitch\.tv', "Twitch", "https://www.twitch.tv/login", True),
+     "https://www.facebook.com/login/", ""),
+    (r'(?://|\.)reddit\.com', "Reddit", "https://www.reddit.com/login/", ""),
+    (r'(?://|\.)twitch\.tv', "Twitch", "https://www.twitch.tv/login", ""),
 ]
 
 
 def detect_login_platform(url):
-    """URL'ye gore giris yapilacak platformu ve giris sayfasini dondur.
-
-    in_app=False olan platformlarda uygulama ici pencere ise yaramaz;
-    arayuz kullaniciyi kendi tarayicisinda giris yapmaya yonlendirir
-    (cerezler tarayicidan okunuyor).
-    """
-    for pattern, label, login_url, in_app in LOGIN_PLATFORMS:
+    """URL'ye gore giris yapilacak platformu, giris sayfasini ve ipucunu dondur."""
+    for pattern, label, login_url, hint in LOGIN_PLATFORMS:
         if re.search(pattern, url or "", re.IGNORECASE):
-            return {"platform": label, "login_url": login_url, "in_app": in_app}
+            return {"platform": label, "login_url": login_url, "hint": hint}
     host = ""
     m = re.match(r'https?://([^/]+)', url or "", re.IGNORECASE)
     if m:
         host = m.group(1)
     if host:
         return {"platform": host.replace("www.", ""),
-                "login_url": f"https://{host}/", "in_app": True}
-    return {"platform": "Platform", "login_url": "", "in_app": False}
+                "login_url": f"https://{host}/", "hint": ""}
+    return {"platform": "Platform", "login_url": "", "hint": ""}
 
 
 def _is_login_error(msg):
@@ -489,7 +484,7 @@ def friendly_error(error_msg, url=""):
         info = detect_login_platform(url)
         return (f"Yaş sınırlı içerik. {info['platform']} hesabınızla giriş yapmanız gerekiyor.",
                 {"needs_login": True, "login_platform": info["platform"],
-                 "login_url": info["login_url"], "login_in_app": info["in_app"]})
+                 "login_url": info["login_url"], "login_hint": info["hint"]})
     if _is_ip_block_error(msg):
         return ("Bu içeriğe bulunduğunuz IP/bölgeden erişim engellenmiş. "
                 "Giriş yapmak bunu çözmez."), {}
@@ -500,7 +495,7 @@ def friendly_error(error_msg, url=""):
         info = detect_login_platform(url)
         return (f"Bu içerik {info['platform']} girişi gerektiriyor.",
                 {"needs_login": True, "login_platform": info["platform"],
-                 "login_url": info["login_url"], "login_in_app": info["in_app"]})
+                 "login_url": info["login_url"], "login_hint": info["hint"]})
     if "video unavailable" in low or "no longer available" in low \
             or "has been removed" in low or "this video has been deleted" in low:
         return "Bu video kaldırılmış ya da mevcut değil.", {}
