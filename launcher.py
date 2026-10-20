@@ -379,6 +379,18 @@ def main():
     except Exception:
         pass
 
+    # Ustune: popup'lari ayni pencerede degil GERCEK popup olarak ac. Ayni
+    # pencerede acilinca window.opener kayboluyor ve Google girisi sonucunu
+    # geri gonderemiyordu. webview.start() oncesinde kurulmali: pywebview
+    # isleyiciyi WebView2 hazir oldugunda baglar. Basarisiz olursa yukaridaki
+    # "ayni pencerede ac" davranisi gecerli kalir.
+    try:
+        import popup_support
+        if popup_support.install():
+            _log("[giris] WebView2 popup destegi etkin")
+    except Exception as e:
+        _log("[giris] popup destegi kurulamadi:", repr(e))
+
     # Start with Edge WebView2 (built into Windows 10/11)
     try:
         webview.start(gui='edgechromium', debug=False,
