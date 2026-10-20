@@ -22,13 +22,14 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
 import urllib.request
 import zipfile
 
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.3.0"
 
 GITHUB_REPO = "hayatexe/video-downloader"
 PYPI_YTDLP_JSON = "https://pypi.org/pypi/yt-dlp/json"
@@ -36,7 +37,16 @@ GITHUB_LATEST_RELEASE = "https://api.github.com/repos/%s/releases/latest" % GITH
 
 USER_AGENT = "VideoDownloader/%s" % APP_VERSION
 NET_TIMEOUT = 10          # tek bir istegin azami suresi
-CHECK_INTERVAL = 24 * 3600  # gunde bir kez kontrol yeter
+CHECK_INTERVAL = 24 * 3600      # yt-dlp: gunde bir kez kontrol yeter
+APP_CHECK_INTERVAL = 6 * 3600   # uygulama: gunde birkac kez bakmak yeterli
+
+# Inno Setup sessiz kurulum bayraklari
+SILENT_FLAGS = ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
+                "/NOCANCEL", "/CLOSEAPPLICATIONS"]
+
+# Ayni surumu bu kadar denedikten sonra otomatik kurulumdan vazgec; aksi
+# halde kurulum her acilista basarisiz olup sonsuz donguye girebilir.
+MAX_INSTALL_ATTEMPTS = 2
 
 
 # --------------------------------------------------------------------------
@@ -338,8 +348,8 @@ def _expected_sha256(sha256_url):
     return m.group(1).lower() if m else None
 
 
-def download_app_installer(url, sha256_url=None, progress=None):
-    """Kurulum dosyasini indirip DOGRULAR, gecici yolunu dondurur.
+def download_app_installer(url, sha256_url=None, progress=None, dest=None):
+    """Kurulum dosyasini indirip DOGRULAR, tam yolunu dondurur.
 
     Dogrulama neden sart: bu dosyayi uygulama kendisi indirip calistiriyor.
     urllib ile inen dosyaya Windows "Mark-of-the-Web" isareti konmadigi icin
@@ -350,6 +360,9 @@ def download_app_installer(url, sha256_url=None, progress=None):
 
     Saglama toplami bulunamazsa guncelleme YAPILMAZ (dogrulanmamis bir exe
     calistirmaktansa guncellememek yegdir).
+
+    Indirme once ".part" dosyasina yapilir: otomatik guncellemede yarim
+    kalmis bir indirme "kurulmaya hazir surum" sanilmamali.
     """
     if not sha256_url:
         raise RuntimeError("yayinda SHA256 dosyasi yok, guncelleme durduruldu")
@@ -358,15 +371,18 @@ def download_app_installer(url, sha256_url=None, progress=None):
     if not expected:
         raise RuntimeError("SHA256 dosyasi okunamadi, guncelleme durduruldu")
 
-    dest = os.path.join(tempfile.gettempdir(),
-                        "VideoDownloaderSetup-%s.exe" % int(time.time()))
+    if dest is None:
+        dest = os.path.join(tempfile.gettempdir(),
+                            "VideoDownloaderSetup-%s.exe" % int(time.time()))
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    part = dest + ".part"
     digest = hashlib.sha256()
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             total = int(r.headers.get("Content-Length") or 0)
             done = 0
-            with open(dest, "wb") as f:
+            with open(part, "wb") as f:
                 while True:
                     chunk = r.read(256 * 1024)
                     if not chunk:
@@ -382,14 +398,181 @@ def download_app_installer(url, sha256_url=None, progress=None):
             raise RuntimeError(
                 "saglama toplami uyusmuyor (beklenen %s..., gelen %s...)"
                 % (expected[:12], got[:12]))
-        if os.path.getsize(dest) < 1024 * 1024:
+        if os.path.getsize(part) < 1024 * 1024:
             raise RuntimeError("indirilen kurulum dosyasi cok kucuk")
     except Exception:
         # Dogrulanmamis dosyayi diskte birakma
         try:
-            os.remove(dest)
+            os.remove(part)
         except OSError:
             pass
         raise
 
+    if os.path.exists(dest):
+        os.remove(dest)
+    os.rename(part, dest)
     return dest
+
+
+# --------------------------------------------------------------------------
+# Otomatik guncelleme
+#
+# Akis: uygulama acikken yeni surumun kurulumu arka planda indirilir
+# ("staging"). Bir sonraki acilista launcher bunu gorur, sessiz kurulumu
+# baslatip uygulamayi kapatir; kurulum bitince uygulama yeniden acilir.
+# Boylece kullanici hicbir sey onaylamaz, sadece bir sonraki aciliSta
+# birkac saniye fazladan bekler.
+# --------------------------------------------------------------------------
+
+def updates_dir():
+    """Indirilen kurulum dosyalarinin durdugu klasor."""
+    return os.path.join(user_data_dir(), "updates")
+
+
+def get_auto_update():
+    """Otomatik guncelleme acik mi? (varsayilan: acik)"""
+    return bool(_read_state().get("auto_update", True))
+
+
+def set_auto_update(enabled):
+    state = _read_state()
+    state["auto_update"] = bool(enabled)
+    _write_state(state)
+    return bool(enabled)
+
+
+def clear_staged_update(remove_file=True):
+    """Hazirlanmis kurulumu unut (ve dosyasini sil)."""
+    state = _read_state()
+    staged = state.pop("staged_update", None)
+    state.pop("staged_attempts", None)
+    _write_state(state)
+    if remove_file and staged:
+        try:
+            os.remove(staged.get("path", ""))
+        except OSError:
+            pass
+    return staged
+
+
+def staged_update():
+    """Kurulmaya hazir bekleyen guncelleme varsa bilgisini dondurur.
+
+    Surum artik eski kaldiysa (ornegin kurulum basarili oldu) ya da dosya
+    kayboldusa kayit temizlenir.
+    """
+    staged = _read_state().get("staged_update")
+    if not isinstance(staged, dict):
+        return None
+    path, version = staged.get("path"), staged.get("version")
+    if not path or not version:
+        clear_staged_update()
+        return None
+    if _version_tuple(version) <= _version_tuple(APP_VERSION):
+        # Kurulum tutmus: dosyayi silip kaydi kapat.
+        clear_staged_update()
+        return None
+    try:
+        if os.path.getsize(path) < 1024 * 1024:
+            raise OSError
+    except OSError:
+        clear_staged_update()
+        return None
+    return staged
+
+
+def _prune_updates_dir(keep=None):
+    """updates/ klasorunde sadece guncel kurulum dosyasi kalsin."""
+    d = updates_dir()
+    if not os.path.isdir(d):
+        return
+    for name in os.listdir(d):
+        p = os.path.join(d, name)
+        if keep and os.path.abspath(p) == os.path.abspath(keep):
+            continue
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+
+def stage_app_update(info=None, progress=None, force=False):
+    """Yeni surumun kurulumunu arka planda indirip bir sonraki acilisa hazirla.
+
+    Dondurur: hazirlanan guncelleme sozlugu ya da None.
+    """
+    state = _read_state()
+    now = time.time()
+    if info is None:
+        if not force and now - state.get("app_checked_at", 0) < APP_CHECK_INTERVAL:
+            existing = staged_update()
+            return existing
+        info = app_update_available()
+        state = _read_state()
+        state["app_checked_at"] = now
+        _write_state(state)
+    if not info:
+        return None
+
+    existing = staged_update()
+    if existing and existing.get("version") == info["version"]:
+        return existing
+
+    dest = os.path.join(updates_dir(),
+                        "VideoDownloaderSetup-%s.exe" % info["version"])
+    path = download_app_installer(info["url"], info.get("sha256_url"),
+                                  progress=progress, dest=dest)
+    _prune_updates_dir(keep=path)
+
+    state = _read_state()
+    state["staged_update"] = {
+        "version": info["version"],
+        "path": path,
+        "notes": (info.get("notes") or "")[:2000],
+        "staged_at": now,
+    }
+    state["staged_attempts"] = 0
+    _write_state(state)
+    return state["staged_update"]
+
+
+def apply_staged_update(staged=None, relaunch_exe=None):
+    """Sessiz kurulumu baslatir. True donerse uygulama HEMEN kapanmalidir.
+
+    Kurulum sihirbazi uygulamanin dosyalarini degistirecegi icin surec
+    hayatta kalamaz; kurulum bitince uygulama yeniden baslatilir.
+    """
+    staged = staged or staged_update()
+    if not staged or os.name != "nt":
+        return False
+
+    state = _read_state()
+    attempts = int(state.get("staged_attempts", 0))
+    if attempts >= MAX_INSTALL_ATTEMPTS:
+        # Iki kez denendi ve surum hala eski: otomatik kurulum bu surumde
+        # calismiyor. Acilis dongusune girmemek icin vazgec, kullanici
+        # Ayarlar'dan elle kurabilir.
+        return False
+    state["staged_attempts"] = attempts + 1
+    _write_state(state)
+
+    installer = staged["path"]
+    exe = relaunch_exe
+    if exe is None and getattr(sys, "frozen", False):
+        exe = sys.executable
+
+    # cmd /c: kurulum bitene kadar bekler, sonra uygulamayi yeniden acar.
+    # "&" kullaniliyor ki kurulum basarisiz olsa bile uygulama geri gelsin.
+    cmdline = '"%s" %s' % (installer, " ".join(SILENT_FLAGS))
+    if exe:
+        cmdline += ' & start "" "%s"' % exe
+
+    flags = 0
+    for name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_NO_WINDOW"):
+        flags |= getattr(subprocess, name, 0)
+    try:
+        subprocess.Popen(["cmd", "/c", cmdline], creationflags=flags,
+                         close_fds=True)
+    except Exception:
+        return False
+    return True

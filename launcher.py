@@ -130,6 +130,11 @@ body {
     <div class="sub">Başlatılıyor...</div>
 </body></html>"""
 
+
+def _splash(sub_text):
+    """Yukleme ekranini farkli bir alt yazi ile uret."""
+    return LOADING_HTML.replace("Başlatılıyor...", sub_text)
+
 class Api:
     # DIKKAT: js_api'deki public oznitelikler pywebview tarafindan ozyinelemeli
     # taranir. Window nesnesi public tutulursa tum .NET nesne agaci yansima ile
@@ -287,7 +292,33 @@ def main():
     # Yukleme ekrani gorunurken: once yt-dlp'yi guncelle, sonra Flask'i baslat.
     # Sira onemli -- yt_dlp import edildikten sonra surum degistirilemez.
     def boot():
-        # Guncelleme ne olursa olsun Flask BASLAMALI; hicbir hata acilisi
+        # 1) Bir onceki oturumda indirilmis bir surum bekliyor mu? Varsa
+        #    sessizce kur ve uygulamayi kapat; kurulum bitince kendisi
+        #    yeniden acilir. Kullaniciya hicbir sey sorulmaz.
+        try:
+            import updater
+            staged = updater.staged_update() if updater.get_auto_update() else None
+            if staged:
+                _log("[guncelleme] sessiz kurulum baslatiliyor:", staged["version"])
+                try:
+                    window.load_html(_splash(
+                        "Guncelleme kuruluyor (v%s)..." % staged["version"]))
+                except Exception:
+                    pass
+                if updater.apply_staged_update(staged):
+                    # Kurulum sihirbazi dosyalari degistirecek; surecin
+                    # yasamasi mumkun degil.
+                    time.sleep(2)
+                    os._exit(0)
+                _log("[guncelleme] sessiz kurulum baslatilamadi, normal acilis")
+                try:
+                    window.load_html(LOADING_HTML)
+                except Exception:
+                    pass
+        except Exception as e:
+            _log("[guncelleme] bekleyen kurulum atlandi:", repr(e))
+
+        # 2) Guncelleme ne olursa olsun Flask BASLAMALI; hicbir hata acilisi
         # engellememeli.
         try:
             import updater

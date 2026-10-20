@@ -3,7 +3,7 @@
 ; Derleme: ISCC.exe installer.iss
 
 #define MyAppName "Video Downloader"
-#define MyAppVersion "1.2.1"
+#define MyAppVersion "1.3.0"
 #define MyAppPublisher "hayatexe"
 #define MyAppURL "https://github.com/hayatexe/video-downloader"
 #define MyAppExeName "Video Downloader.exe"

@@ -26,8 +26,11 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!s.app_update) return;
             if (localStorage.getItem('vd_update_seen') === s.app_update.version) return;
             localStorage.setItem('vd_update_seen', s.app_update.version);
-            showToast('Yeni sürüm var: v' + s.app_update.version +
-                      ' — Ayarlar\'dan güncelleyebilirsiniz', 'info');
+            // Otomatik guncelleme acikken kullaniciya is dusmuyor; sadece bilgi ver.
+            showToast(s.auto_update !== false
+                ? 'v' + s.app_update.version + ' indiriliyor — bir dahaki açılışta kurulacak'
+                : 'Yeni sürüm var: v' + s.app_update.version +
+                  ' — Ayarlar\'dan güncelleyebilirsiniz', 'info');
         } catch (e) { /* cevrimdisi */ }
     }, 6000);
 
@@ -116,15 +119,30 @@ async function refreshUpdateStatus() {
         // Paket ici kopya guncellenemez; kullaniciya bunu belli et
         ytLabel.title = s.ytdlp_source || '';
 
+        document.getElementById('autoUpdateToggle').checked = s.auto_update !== false;
+        document.getElementById('impersonationWarn').style.display =
+            s.impersonation === false ? '' : 'none';
+
         appUpdateInfo = s.app_update;
         const btn = document.getElementById('appUpdateBtn');
-        if (appUpdateInfo) {
+        const hint = document.getElementById('updateHint');
+        if (s.staged_version) {
+            // Otomatik guncelleme indirmeyi bitirmis: kurulum bir sonraki
+            // acilista kendiliginden yapilacak.
+            btn.style.display = '';
+            btn.classList.add('is-highlight');
+            btn.textContent = 'Şimdi kur';
+            hint.textContent = 'v' + s.staged_version + ' indirildi. Uygulamayı ' +
+                'bir dahaki açışınızda kendiliğinden kurulacak.';
+        } else if (appUpdateInfo) {
             btn.style.display = '';
             btn.classList.add('is-highlight');
             btn.textContent = 'v' + appUpdateInfo.version + ' yükle';
-            document.getElementById('updateHint').textContent =
-                'Yeni sürüm hazır: v' + appUpdateInfo.version +
-                '. İndirilip kurulum başlatılacak, uygulama kapanacak.';
+            hint.textContent = s.auto_update === false
+                ? 'Yeni sürüm hazır: v' + appUpdateInfo.version +
+                  '. İndirilip kurulum başlatılacak, uygulama kapanacak.'
+                : 'Yeni sürüm indiriliyor: v' + appUpdateInfo.version +
+                  '. İndirme bitince bir dahaki açılışta kurulacak.';
         } else {
             btn.style.display = 'none';
         }
@@ -186,6 +204,22 @@ function changeTheme() {
     localStorage.setItem('vd_theme', theme);
     document.body.setAttribute('data-theme', theme);
 }
+async function toggleAutoUpdate() {
+    const enabled = document.getElementById('autoUpdateToggle').checked;
+    try {
+        await fetch('/api/update/auto', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+        showToast(enabled
+            ? 'Güncellemeler otomatik kurulacak'
+            : 'Otomatik güncelleme kapatıldı', 'info');
+    } catch (e) {
+        showToast('Ayar kaydedilemedi', 'error');
+    }
+}
+
 function toggleTray() {
     const isTray = document.getElementById('trayToggle').checked;
     localStorage.setItem('vd_tray', isTray);
@@ -214,26 +248,33 @@ function showToast(message, type = 'info') {
     }, 4000);
 }
 
-// ===== LOGIN PROMPT (Instagram vb. giriş gerektiren içerik) =====
-function showLoginPrompt() {
+// ===== LOGIN PROMPT (giriş gerektiren içerik) =====
+// Giriş sayfası linkin platformuna göre açılır; TikTok linkinde Instagram
+// giriş sayfası açmak işe yaramıyordu.
+function showLoginPrompt(data) {
+    const platform = (data && data.login_platform) || 'Platform';
+    const loginUrl = (data && data.login_url) || '';
     const container = document.getElementById('toastContainer');
     const t = document.createElement('div');
     t.className = 'toast toast-info';
     t.style.flexWrap = 'wrap';
-    t.innerHTML = `
-        <span>Bu içerik giriş gerektiriyor.</span>
-        <button onclick="openLoginWindow(this)" style="margin-left:8px;padding:6px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,#8b5cf6,#6366f1);color:#fff;cursor:pointer;font-weight:600;font-size:13px;">
-            Instagram'a Giriş Yap
-        </button>`;
+    const btn = document.createElement('button');
+    btn.textContent = `${platform} Giriş Yap`;
+    btn.style.cssText = 'margin-left:8px;padding:6px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,#8b5cf6,#6366f1);color:#fff;cursor:pointer;font-weight:600;font-size:13px;';
+    btn.onclick = () => openLoginWindow(btn, loginUrl);
+    const span = document.createElement('span');
+    span.textContent = `Bu içerik ${platform} girişi gerektiriyor.`;
+    t.appendChild(span);
+    t.appendChild(btn);
     container.appendChild(t);
     setTimeout(() => t.remove(), 60000);
 }
 
-async function openLoginWindow(btn) {
+async function openLoginWindow(btn, loginUrl) {
     if (btn && btn.parentElement) btn.parentElement.remove();
     showToast('Giriş penceresi açıldı. Giriş yaptıktan sonra o pencereyi kapatın.', 'info');
     try {
-        await window.pywebview.api.open_login('https://www.instagram.com/accounts/login/');
+        await window.pywebview.api.open_login(loginUrl || '');
         showToast('Giriş kaydedildi, video bilgisi tekrar alınıyor...', 'success');
         fetchVideoInfo();
     } catch (e) {
@@ -261,7 +302,7 @@ async function fetchVideoInfo() {
         const data = await res.json();
         if (!res.ok) {
             if (data.needs_login && window.pywebview && window.pywebview.api) {
-                showLoginPrompt();
+                showLoginPrompt(data);
             } else {
                 showToast(data.error || 'Video bilgisi alınamadı.', 'error');
             }

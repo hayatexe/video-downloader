@@ -15,7 +15,7 @@ if errorlevel 1 (
 )
 
 echo [1/3] Gerekli araclar yukleniyor...
-py -3 -m pip install --quiet --upgrade pyinstaller "pywebview>=5.3" pystray pillow flask flask-cors yt-dlp
+py -3 -m pip install --quiet --upgrade pyinstaller "pywebview>=5.3" pystray pillow flask flask-cors yt-dlp "curl_cffi>=0.7.4"
 if errorlevel 1 ( echo Yuklenemedi! & pause & exit /b 1 )
 
 echo [2/3] Uygulama derleniyor... (onedir modu: hizli acilis)
@@ -102,5 +102,9 @@ echo   GitHub yayinina IKISINI de yukle:
 echo     dist\Video Downloader Kurulum.exe
 echo     dist\SHA256SUMS.txt
 echo.
+echo   (Yayini GitHub Actions da yapabilir: Actions -^> Release -^> Run workflow)
+echo.
+echo   Kurulum simdi baslatiliyor...
+start "" "dist\Video Downloader Kurulum.exe"
 explorer dist
 pause

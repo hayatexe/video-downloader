@@ -53,8 +53,19 @@ Uygulamanın iki ayrı güncelleme kanalı vardır:
 
 | Kanal | Boyut | Ne zaman | Nasıl |
 |---|---|---|---|
-| **yt-dlp** | ~3 MB | Günde bir kez, açılışta | Sessiz, otomatik |
-| **Uygulama** | ~70 MB | Yeni sürüm çıktığında | Sorar, onay sonrası kurar |
+| **yt-dlp** | ~3 MB | Günde bir kez (açılışta) + indirme bozulduğu an | Sessiz, otomatik |
+| **Uygulama** | ~70 MB | Yeni sürüm çıktığında | Arka planda iner, **bir sonraki açılışta sessizce kurulur** |
+
+Uygulama kanalı artık hiçbir şey sormaz: siz indirme yaparken yeni sürümün
+kurulum dosyası arka planda (boş bir anda) `%LOCALAPPDATA%\Video Downloader\updates`
+altına iner. Uygulamayı bir dahaki açışınızda açılış ekranı "Güncelleme
+kuruluyor" der, kurulum sessizce (`/VERYSILENT`) yapılır ve uygulama kendini
+yeniden açar. Toplam gecikme birkaç saniyedir.
+
+Kurulum iki kez denenip de sürüm değişmezse otomatik kurulumdan vazgeçilir
+(açılış döngüsüne girmemek için) ve güncelleme **Ayarlar → Güncelleme**'den
+elle kurulabilir halde bekler. Otomatik güncellemeyi **Ayarlar → Otomatik
+Güncelleme** ile kapatabilirsiniz.
 
 yt-dlp kanalı önemlidir: YouTube ve TikTok çıkarım yöntemlerini ayda birkaç
 kez değiştirir ve eski bir yt-dlp `HTTP Error 403` ya da
@@ -70,11 +81,36 @@ bağlantı almak. Uygulama bunu kendiliğinden yapıyor: böyle bir hatada
 indirmeyi en fazla iki kez, artan beklemeyle yeniden dener. Kalıcı hatalarda
 (video kaldırılmış vb.) boşa deneme yapmaz.
 
-Üç deneme de 403 verirse bu artık gerçekten eskimiş bir yt-dlp'ye işaret
-eder; uygulama bir sonraki açılış için güncelleme kontrolünü zorlar.
+Üç deneme de 403 verirse bu artık gerçekten eskimiş bir yt-dlp'ye işaret eder.
+Böyle bir durumda güncelleme artık bir sonraki açılış beklenmeden **o anda**
+arka planda indirilir; yeni sürüm bir sonraki açılışta devreye girer.
+**Ayarlar → Güncelleme → Denetle** ile elle de tetikleyebilirsiniz.
 
-İndirmeler bozulursa **Ayarlar → Güncelleme → Denetle** ile yt-dlp'yi elle de
-güncelleyebilirsiniz.
+> **Not:** TikTok ve Instagram'ın web çıkarımı `curl_cffi` ile yapılan tarayıcı
+> taklidine (impersonation) ihtiyaç duyar. Bu paket eksikse yt-dlp güncel olsa
+> bile TikTok `Unexpected response from webpage request` verir ve uygulama bunu
+> "giriş gerekiyor" sanırdı. Artık pakete dahil ediliyor.
+
+## Sürüm çıkarma (GitHub Actions)
+
+Derleme artık kendi bilgisayarınızda yapılmak zorunda değil.
+`.github/workflows/release.yml` Windows runner'da her şeyi yapar: bağımlılıkları
+kurar, ffmpeg'i indirir, PyInstaller ile derler, `curl_cffi`'nin pakete girdiğini
+doğrular, Inno Setup ile kurulum paketini üretir, `SHA256SUMS.txt` hesaplar ve
+ikisini birlikte **GitHub Release** olarak yayınlar.
+
+Uygulamanın otomatik güncellemesi tam da bu Release'e baktığı için (`updater.py`
+→ `/releases/latest`) yeni sürüm yayınlandığı anda kurulu uygulamalar kendini
+günceller. SHA256 dosyası şart: uygulama indirdiği kurulumu doğrulayamazsa
+güncellemeyi yapmaz.
+
+İki şekilde tetiklenir:
+
+* `git tag v1.3.1 && git push origin v1.3.1`
+* GitHub → **Actions → Release → Run workflow** → sürüm numarasını yazın
+
+Sürüm numarası etiketten alınır ve derleme sırasında `updater.py` ile
+`installer.iss` içine yazılır — iki dosyayı elle güncellemeyi unutma derdi yok.
 
 ## Kaynaktan çalıştırma
 
