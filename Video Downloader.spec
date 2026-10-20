@@ -60,8 +60,15 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     # Kullanilmayan agir modulleri disarida birak: daha kucuk exe, daha hizli acilis
+    # numpy + cryptography: ~36 MB, hicbiri kullanilmiyor.
+    #   numpy  -> PIL'in opsiyonel entegrasyonu cekiyor; uygulama PIL'i yalnizca
+    #             tepsi simgesi icin kullaniyor (Image.new + ImageDraw).
+    #   cryptography -> site-packages'ta duran alakasiz paketlerden
+    #             (azure-identity vb.) geliyor; yt-dlp onu hic import etmiyor.
+    # Site-packages'a bunlari getiren bir paket kurulursa tekrar sismesin diye
+    # burada acikca disarida tutuluyorlar.
     excludes=['tkinter', '_tkinter', 'unittest', 'pydoc', 'doctest', 'lib2to3',
-              'xmlrpc'],
+              'xmlrpc', 'numpy', 'cryptography'],
     noarchive=False,
     optimize=0,
 )
@@ -96,6 +103,9 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon='icon.ico',
+    # Yayinci/surum meta verisi: imzasiz exe'de SmartScreen penceresinin ve
+    # Dosya > Ozellikler'in bos gorunmesini onler. Uyariyi kaldirmaz.
+    version='version_info.txt',
 )
 
 coll = COLLECT(

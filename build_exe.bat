@@ -35,6 +35,28 @@ if not exist "dist\Video Downloader\ffmpeg" mkdir "dist\Video Downloader\ffmpeg"
 xcopy /Y /Q /E "ffmpeg\*" "dist\Video Downloader\ffmpeg\" >nul
 if errorlevel 1 ( echo HATA: ffmpeg kopyalanamadi! & pause & exit /b 1 )
 
+:: --- Isteğe bagli kod imzalama ---------------------------------------------
+:: Kod imzasi SmartScreen uyarisini zamanla ortadan kaldiran TEK yol; itibar
+:: sertifikaya islendigi icin her yeni surumde sifirlanmaz. Sertifika yoksa
+:: bu adim sessizce atlanir, derleme normal sekilde imzasiz devam eder.
+::
+:: Kullanmak icin sertifikanin parmak izini ortam degiskenine koy:
+::   setx VD_SIGN_THUMBPRINT "a1b2c3..."
+:: Sertifika Windows sertifika deposunda kurulu olmali (token/HSM dahil).
+if defined VD_SIGN_THUMBPRINT (
+    echo      Uygulama imzalaniyor...
+    where signtool >nul 2>&1
+    if errorlevel 1 (
+        echo UYARI: signtool bulunamadi, imzalama atlandi.
+        echo        Windows SDK gerekli: winget install Microsoft.WindowsSDK
+    ) else (
+        signtool sign /sha1 %VD_SIGN_THUMBPRINT% /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "dist\Video Downloader\Video Downloader.exe"
+        if errorlevel 1 ( echo HATA: Uygulama imzalanamadi! & pause & exit /b 1 )
+    )
+) else (
+    echo      Imzalama atlandi ^(VD_SIGN_THUMBPRINT tanimli degil^) - SmartScreen uyarisi cikacak.
+)
+
 echo [3/3] Kurulum paketi olusturuluyor...
 set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
 if not exist "%ISCC%" set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
@@ -51,6 +73,23 @@ if errorlevel 1 (
     pause & exit /b 1
 )
 
+:: Kurulum dosyasini da imzala (varsa)
+if defined VD_SIGN_THUMBPRINT (
+    where signtool >nul 2>&1
+    if not errorlevel 1 (
+        echo      Kurulum paketi imzalaniyor...
+        signtool sign /sha1 %VD_SIGN_THUMBPRINT% /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "dist\Video Downloader Kurulum.exe"
+        if errorlevel 1 ( echo HATA: Kurulum paketi imzalanamadi! & pause & exit /b 1 )
+    )
+)
+
+:: SHA256 saglama toplami. Uygulamanin otomatik guncellemesi indirdigi dosyayi
+:: bununla dogruluyor ve uyusmazsa kurulumu yapmiyor. Yayina (GitHub Release)
+:: kurulum exe'si ile BIRLIKTE yuklenmesi SART, yoksa guncelleme durur.
+echo      SHA256 hesaplaniyor...
+powershell -NoProfile -Command "$h=(Get-FileHash 'dist\Video Downloader Kurulum.exe' -Algorithm SHA256).Hash.ToLower(); \"$h *Video Downloader Kurulum.exe\" | Set-Content -Encoding ascii 'dist\SHA256SUMS.txt'; Write-Host $h"
+if errorlevel 1 ( echo HATA: SHA256 hesaplanamadi! & pause & exit /b 1 )
+
 echo.
 echo  ==========================================
 echo   TAMAMLANDI!
@@ -59,7 +98,13 @@ echo.
 echo   Arkadaslarina atacagin dosya:
 echo   dist\Video Downloader Kurulum.exe
 echo.
+echo   GitHub yayinina IKISINI de yukle:
+echo     dist\Video Downloader Kurulum.exe
+echo     dist\SHA256SUMS.txt
+echo.
+echo   (Yayini GitHub Actions da yapabilir: Actions -^> Release -^> Run workflow)
+echo.
 echo   Kurulum simdi baslatiliyor...
 start "" "dist\Video Downloader Kurulum.exe"
-echo   (Paylasmak icin: explorer dist)
+explorer dist
 pause

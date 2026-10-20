@@ -279,6 +279,29 @@ def _is_ip_block_error(msg):
     ))
 
 
+# Gecici hatalar icin yeniden deneme. Olcum: ayni video 6 denemede 6 kez
+# indi, ama baska bir denemede 403 verdi -- yani hata araliksal, kalici degil.
+# Kullanicinin "bazen oluyor" demesinin sebebi bu.
+TRANSIENT_RETRIES = 2
+TRANSIENT_BACKOFF = 1.5  # saniye, her denemede artar
+
+
+def _is_transient_error(msg):
+    """Yeniden denemenin ise yarayabilecegi, gecici gorunen hatalar.
+
+    403 burada: YouTube'un verdigi imzali indirme URL'i gecersizleserek
+    "HTTP Error 403" uretiyor. Yeniden cikarim taze bir URL (ve bazen baska
+    bir player client) getirdigi icin ikinci deneme genelde tutuyor.
+    """
+    m = str(msg).lower()
+    return any(k in m for k in (
+        "http error 403", "http error 429", "http error 5",
+        "unable to download video data", "read timed out",
+        "connection reset", "connection aborted", "temporary failure",
+        "incomplete read", "the read operation timed out",
+    ))
+
+
 def _is_stale_ytdlp_error(msg):
     """Genellikle 'yt-dlp eskimis' anlamina gelen hatalar.
 
@@ -335,26 +358,42 @@ def extract_with_cookie_fallback(url, base_opts, browser_pref="auto", download=F
     for name, extra in attempts:
         opts = dict(base_opts)
         opts.update(extra)
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=download)
-            if name:
-                _working_cookie_browser = name
-            host = extra.get("extractor_args", {}).get("tiktok", {}).get("api_hostname")
-            if host:
-                _working_tiktok_host = host[0]
-            return info, opts
-        except Exception as e:
-            last_err = e
-            if _is_login_error(e) and login_err is None:
-                login_err = e
-            # Cerezsiz ilk deneme "giris gerekli" ya da "sayfa okunamadi"
-            # DISINDA bir hata verdiyse yeniden denemenin anlami yok.
-            if not extra and not _is_login_error(e) and not (
-                tiktok_attempts and _is_extractor_response_error(e)
-            ):
-                raise
-            continue
+
+        # Her deneme, gecici hatalar icin kendi icinde birkac kez tekrarlanir.
+        # Bunun ydl_opts["retries"] ile ayni sey OLMADIGINA dikkat: oradaki
+        # yeniden deneme ayni URL'i tekrar ister. 403 ise URL'in gecerliligini
+        # yitirmesinden gelir, ayni URL hep 403 verir -- cozum yeniden
+        # CIKARIM yapmak, yani extract_info'yu bastan cagirmak.
+        err = None
+        for deneme in range(TRANSIENT_RETRIES + 1):
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=download)
+                if name:
+                    _working_cookie_browser = name
+                host = (extra.get("extractor_args", {})
+                        .get("tiktok", {}).get("api_hostname"))
+                if host:
+                    _working_tiktok_host = host[0]
+                return info, opts
+            except Exception as e:
+                err = e
+                if deneme < TRANSIENT_RETRIES and _is_transient_error(e):
+                    time.sleep(TRANSIENT_BACKOFF * (deneme + 1))
+                    continue
+                break
+
+        e = err
+        last_err = e
+        if _is_login_error(e) and login_err is None:
+            login_err = e
+        # Cerezsiz ilk deneme "giris gerekli" ya da "sayfa okunamadi"
+        # DISINDA bir hata verdiyse yeniden denemenin anlami yok.
+        if not extra and not _is_login_error(e) and not (
+            tiktok_attempts and _is_extractor_response_error(e)
+        ):
+            raise
+        continue
 
     # Her yol tukendi. Hata yt-dlp'nin eskimesine isaret ediyorsa bir sonraki
     # aciliSta zorla guncelleme kontrolu yapilmasi icin isaretle.
@@ -1101,7 +1140,7 @@ def update_app_now():
     with _app_update_lock:
         info = _app_update_info
 
-    # Otomatik guncelleme zaten indirmis olabilir; o zaman tekrar indirme.
+    # Otomatik guncelleme zaten indirip DOGRULAMIS olabilir; tekrar indirme.
     staged = updater.staged_update()
     if staged:
         path = staged["path"]
@@ -1109,7 +1148,8 @@ def update_app_now():
         return jsonify({"error": "Guncelleme yok"}), 400
     else:
         try:
-            path = updater.download_app_installer(info["url"])
+            path = updater.download_app_installer(info["url"],
+                                                  info.get("sha256_url"))
         except Exception as e:
             return jsonify({"error": "Indirilemedi: %s" % e}), 500
 

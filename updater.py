@@ -17,6 +17,7 @@ DIKKAT: activate() `import yt_dlp` YAPILMADAN ONCE cagrilmalidir. app.py bunu
 kendi ilk satirlarinda yapar.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -312,55 +313,101 @@ def flag_ytdlp_stale():
 # --------------------------------------------------------------------------
 
 def latest_app_release():
-    """GitHub'daki son surumu dondurur: (surum, installer_url, notlar)."""
+    """GitHub'daki son surum: (surum, installer_url, sha256_url, notlar)."""
     data = _get_json(GITHUB_LATEST_RELEASE)
     tag = (data.get("tag_name") or "").lstrip("vV")
     url = None
+    sha_url = None
     for a in data.get("assets", []):
-        if a.get("name", "").lower().endswith(".exe"):
+        name = (a.get("name") or "").lower()
+        if name.endswith(".exe") and url is None:
             url = a.get("browser_download_url")
-            break
-    return tag, url, data.get("body") or ""
+        elif "sha256" in name and sha_url is None:
+            sha_url = a.get("browser_download_url")
+    return tag, url, sha_url, data.get("body") or ""
 
 
 def app_update_available():
     """Yeni uygulama surumu varsa bilgi sozlugu, yoksa None."""
     try:
-        tag, url, notes = latest_app_release()
+        tag, url, sha_url, notes = latest_app_release()
     except Exception:
         return None
     if not tag or not url:
         return None
     if _version_tuple(tag) <= _version_tuple(APP_VERSION):
         return None
-    return {"version": tag, "url": url, "notes": notes, "current": APP_VERSION}
+    return {"version": tag, "url": url, "sha256_url": sha_url,
+            "notes": notes, "current": APP_VERSION}
 
 
-def download_app_installer(url, progress=None, dest=None):
-    """Kurulum dosyasini indirir, tam yolunu dondurur."""
+def _expected_sha256(sha256_url):
+    """Yayindaki SHA256SUMS dosyasindan saglama toplamini oku."""
+    text = _get(sha256_url, timeout=30).decode("utf-8", "replace")
+    m = re.search(r"\b([0-9a-fA-F]{64})\b", text)
+    return m.group(1).lower() if m else None
+
+
+def download_app_installer(url, sha256_url=None, progress=None, dest=None):
+    """Kurulum dosyasini indirip DOGRULAR, tam yolunu dondurur.
+
+    Dogrulama neden sart: bu dosyayi uygulama kendisi indirip calistiriyor.
+    urllib ile inen dosyaya Windows "Mark-of-the-Web" isareti konmadigi icin
+    SmartScreen'in "bilinmeyen yayinci" onayi devreye girmez. (Defender'in
+    gercek zamanli taramasi yine calisir, ama o kotu amacli yazilim arar;
+    dosyanin BEKLENEN dosya olup olmadigini denetlemez.) Yani butunlugu
+    dogrulayan tek yer burasi.
+
+    Saglama toplami bulunamazsa guncelleme YAPILMAZ (dogrulanmamis bir exe
+    calistirmaktansa guncellememek yegdir).
+
+    Indirme once ".part" dosyasina yapilir: otomatik guncellemede yarim
+    kalmis bir indirme "kurulmaya hazir surum" sanilmamali.
+    """
+    if not sha256_url:
+        raise RuntimeError("yayinda SHA256 dosyasi yok, guncelleme durduruldu")
+
+    expected = _expected_sha256(sha256_url)
+    if not expected:
+        raise RuntimeError("SHA256 dosyasi okunamadi, guncelleme durduruldu")
+
     if dest is None:
         dest = os.path.join(tempfile.gettempdir(),
                             "VideoDownloaderSetup-%s.exe" % int(time.time()))
     os.makedirs(os.path.dirname(dest), exist_ok=True)
+    part = dest + ".part"
+    digest = hashlib.sha256()
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        total = int(r.headers.get("Content-Length") or 0)
-        done = 0
-        part = dest + ".part"
-        with open(part, "wb") as f:
-            while True:
-                chunk = r.read(256 * 1024)
-                if not chunk:
-                    break
-                f.write(chunk)
-                done += len(chunk)
-                if progress and total:
-                    progress(done * 100.0 / total)
-    if os.path.getsize(part) < 1024 * 1024:
-        os.remove(part)
-        raise RuntimeError("indirilen kurulum dosyasi cok kucuk")
-    # Yarim kalmis bir dosyanin "hazir kurulum" sanilmasini onlemek icin
-    # indirme bitmeden hedef ada gecilmez.
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            total = int(r.headers.get("Content-Length") or 0)
+            done = 0
+            with open(part, "wb") as f:
+                while True:
+                    chunk = r.read(256 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    digest.update(chunk)
+                    done += len(chunk)
+                    if progress and total:
+                        progress(done * 100.0 / total)
+
+        got = digest.hexdigest()
+        if got != expected:
+            raise RuntimeError(
+                "saglama toplami uyusmuyor (beklenen %s..., gelen %s...)"
+                % (expected[:12], got[:12]))
+        if os.path.getsize(part) < 1024 * 1024:
+            raise RuntimeError("indirilen kurulum dosyasi cok kucuk")
+    except Exception:
+        # Dogrulanmamis dosyayi diskte birakma
+        try:
+            os.remove(part)
+        except OSError:
+            pass
+        raise
+
     if os.path.exists(dest):
         os.remove(dest)
     os.rename(part, dest)
@@ -473,7 +520,8 @@ def stage_app_update(info=None, progress=None, force=False):
 
     dest = os.path.join(updates_dir(),
                         "VideoDownloaderSetup-%s.exe" % info["version"])
-    path = download_app_installer(info["url"], progress=progress, dest=dest)
+    path = download_app_installer(info["url"], info.get("sha256_url"),
+                                  progress=progress, dest=dest)
     _prune_updates_dir(keep=path)
 
     state = _read_state()
