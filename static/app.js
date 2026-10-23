@@ -242,10 +242,13 @@ function showToast(message, type = 'info') {
     toast.innerHTML = `${icon} <span>${message}</span>`;
     container.appendChild(toast);
 
+    // Uzun mesajlar (or. "bu hesap bu videoyu izleyemiyor") 4 sn'de okunamadan
+    // kayboluyordu; sure metin uzunluguna gore uzasin.
+    const duration = Math.min(15000, Math.max(4000, String(message).length * 60));
     setTimeout(() => {
         toast.classList.add('hiding');
         toast.addEventListener('animationend', () => toast.remove());
-    }, 4000);
+    }, duration);
 }
 
 // ===== LOGIN PROMPT (giriş gerektiren içerik) =====
@@ -291,7 +294,7 @@ function showLoginPrompt(data, onLoggedIn) {
 
 async function openLoginWindow(toast, loginUrl, platform, loginDomain, retry) {
     if (toast && toast.remove) toast.remove();
-    showToast('Giriş penceresi açıldı. Giriş yaptıktan sonra pencereyi kapatın.', 'info');
+    showToast('Giriş penceresi açıldı. Giriş tamamlanınca pencere kendiliğinden kapanır.', 'info');
     try {
         const saved = await window.pywebview.api.open_login(loginUrl || '', loginDomain || null);
         if (saved === 0) {
