@@ -38,6 +38,48 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 _FFMPEG_CACHE = "unset"  # cached result of _find_ffmpeg (None = not found)
 
 
+_JS_RUNTIME_CACHE = "unset"
+
+
+def _find_js_runtime():
+    """yt-dlp'nin js_runtimes ayari icin calistirici; yoksa None.
+
+    YouTube'un girisli istemcileri (web_embedded, tv_downgraded, web) sifre
+    bulmacasini cozmek icin JS calistiricisi ister. Olmazsa bu istemcilerin
+    formatlari atilir ve indirme "Requested format is not available" ile
+    biter. Girissiz istemci (visionos) JS istemez; bu yuzden calistirici
+    sadece gerektiginde verilir (bkz. extract_with_cookie_fallback).
+    """
+    global _JS_RUNTIME_CACHE
+    if _JS_RUNTIME_CACHE != "unset":
+        return _JS_RUNTIME_CACHE
+    import shutil
+    found = None
+    # Kurulumla gelen quickjs (installer {app}\jsruntime altina koyar)
+    for base in (_APP_DIR, _BASE_DIR):
+        p = os.path.join(base, "jsruntime", "qjs.exe")
+        if os.path.isfile(p):
+            found = {"quickjs": {"path": p}}
+            break
+    if found is None:
+        # Kaynaktan calistirma: PATH'teki calistiricilar (hizlidan yavasa)
+        for exe, key in (("deno", "deno"), ("bun", "bun"), ("node", "node"),
+                         ("qjs", "quickjs")):
+            path = shutil.which(exe)
+            if path:
+                found = {key: {"path": path}}
+                break
+    _JS_RUNTIME_CACHE = found
+    return found
+
+
+def _is_formats_missing(msg):
+    m = str(msg).lower()
+    return any(k in m for k in ("requested format is not available",
+                                "no video formats found",
+                                "only images are available"))
+
+
 def _find_ffmpeg():
     """Find ffmpeg binary, checking common install locations on Windows."""
     global _FFMPEG_CACHE
@@ -372,7 +414,11 @@ class _SessionLogger:
     """
 
     KEYS = ("no longer valid", "found youtube account cookies",
-            "age-verification", "age verification")
+            "age-verification", "age verification",
+            # JS calistiricisi baslamazsa ya da cozucu betik reddedilirse
+            # girisli formatlar kaybolur; nedenini log'da gorebilmek icin.
+            "javascript runtime", "js runtime", "challenge solver",
+            "n challenge", "signature", "formats have been skipped")
 
     def __init__(self):
         self.lines = []
@@ -540,6 +586,12 @@ def extract_with_cookie_fallback(url, base_opts, browser_pref="auto", download=F
     global _working_cookie_browser, _working_tiktok_host
 
     attempts = [(None, {})]
+    js_rt = _find_js_runtime() if _is_youtube_url(url) else None
+    if js_rt:
+        # Girissiz deneme "format yok" diye duserse ayni istegi JS
+        # calistiricisiyla tekrarla (JS'siz istemci yetmedi demektir).
+        # Diger hatalarda bu deneme atlanir; quickjs yavas, bosuna bekletmesin.
+        attempts.append((None, {"js_runtimes": js_rt, "_only_if_formats_missing": True}))
     # TikTok'ta web sayfasi cikarimi sik sik bloke oluyor; cerezlerden once
     # mobil API sunucularini dene.
     tiktok_attempts = _tiktok_host_attempts() if _is_tiktok_url(url) else []
@@ -571,8 +623,15 @@ def extract_with_cookie_fallback(url, base_opts, browser_pref="auto", download=F
     had_yt_auth = is_yt and cookie_file_has_auth("youtube.com")
     session_log = None
     for name, extra in attempts:
+        extra = dict(extra)
+        if extra.pop("_only_if_formats_missing", False) and not _is_formats_missing(last_err):
+            continue
         opts = dict(base_opts)
         opts.update(extra)
+        if js_rt and ("cookiefile" in extra or "cookiesfrombrowser" in extra):
+            # Girisli YouTube istemcileri JS calistiricisi olmadan format
+            # veremiyor; log'da "Requested format is not available" buydu.
+            opts["js_runtimes"] = js_rt
         if "cookiefile" in extra and is_yt:
             session_log = _SessionLogger()
             opts.update({"logger": session_log, "quiet": False, "no_warnings": False})
@@ -610,6 +669,8 @@ def extract_with_cookie_fallback(url, base_opts, browser_pref="auto", download=F
             cookiefile_err = e
         elif "extractor_args" in extra:
             label = "tiktok-api"
+        elif "js_runtimes" in extra:
+            label = "cerezsiz+js"
         else:
             label = "cerezsiz"
         _log_attempt(url, label, e)
@@ -619,8 +680,13 @@ def extract_with_cookie_fallback(url, base_opts, browser_pref="auto", download=F
         # DISINDA bir hata verdiyse yeniden denemenin anlami yok.
         if not extra and not _is_login_error(e) and not (
             tiktok_attempts and _is_extractor_response_error(e)
-        ):
-            raise
+        ) and not (js_rt and _is_formats_missing(e)):
+            # Duz "raise" burada yanlis: istisna yukaridaki ic dongude
+            # yakalanip err'e alindi, artik aktif bir istisna yok. Duz
+            # raise "No active exception to reraise" uretiyor ve kullanici
+            # "video kaldirilmis / gizli / desteklenmeyen URL" yerine
+            # "Beklenmeyen hata" goruyordu.
+            raise e
         continue
 
     # Her yol tukendi. Hata yt-dlp'nin eskimesine isaret ediyorsa bir sonraki
@@ -695,6 +761,20 @@ def _refresh_ytdlp_async():
     threading.Thread(target=worker, daemon=True).start()
 
 
+def _playlist_url_for(url):
+    """watch?v=X&list=Y linkinden tum listenin linkini cikar.
+
+    YouTube'un otomatik Mix listeleri (RD...) sonsuz uzunlukta; onlar icin
+    oneri yapilmaz.
+    """
+    if not _is_youtube_url(url):
+        return None
+    m = re.search(r'[?&]list=([A-Za-z0-9_-]+)', url or "")
+    if not m or m.group(1).startswith("RD"):
+        return None
+    return "https://www.youtube.com/playlist?list=" + m.group(1)
+
+
 def friendly_error(error_msg, url=""):
     """yt-dlp hatasini anlasilir bir Turkce mesaja cevir.
 
@@ -732,11 +812,18 @@ def friendly_error(error_msg, url=""):
         info = detect_login_platform(url)
         return (f"Bu içerik {info['platform']} girişi gerektiriyor.",
                 _login_payload(info))
-    if "video unavailable" in low or "no longer available" in low \
+    if "video unavailable" in low or "video is unavailable" in low \
+            or "no longer available" in low \
             or "has been removed" in low or "this video has been deleted" in low:
         return "Bu video kaldırılmış ya da mevcut değil.", {}
+    # HTTP 404/410 bir ag sorunu degil: sayfa yok. Asagidaki "unable to
+    # download webpage" kontrolu bunu "internet yok" diye yanlis ceviriyordu.
+    if "http error 404" in low or "http error 410" in low:
+        return "Sayfa bulunamadı. Linkin doğru olduğundan emin olun.", {}
     if "requested format is not available" in low or "no video formats" in low:
-        return ("Seçtiğiniz kalite bu video için yok. Farklı bir kalite deneyin."), {}
+        # Otomatik modda da gelebiliyor; "sectiginiz kalite" demek yanlis.
+        return ("Bu video için indirilebilir format bulunamadı. Belirli bir "
+                "kalite seçtiyseniz \"Otomatik\" ile deneyin."), {}
     if "ffmpeg" in low and ("not found" in low or "bulunamadi" in low):
         return ("ffmpeg bulunamadı. Ses dönüştürme ve video+ses birleştirme "
                 "için gerekli; uygulamayı yeniden kurmak sorunu çözer."), {}
@@ -848,8 +935,17 @@ def get_video_info():
             "no_warnings": True,
             "skip_download": True,
             "no_check_certificates": True,
-            "extract_flat": True,  # Çok daha hızlı playlist çekimi sağlar
+            # Liste ogelerini duz (hizli) getir ama en ustteki yonlendirmeyi
+            # coz. True olursa noplaylist'in dondurdugu "su videoya git"
+            # sonucu da cozulmez; baslik "video" ve kalite listesi bos kalir.
+            "extract_flat": "in_playlist",
             "socket_timeout": 15,  # Ağ takılırsa sonsuza kadar bekleme
+            # watch?v=X&list=Y linkinde kullanici X'i izliyor; listeyi
+            # degil o videoyu getir. Eskiden liste aciliyor, kaliteler
+            # listenin 1. videosundan cekiliyordu (o video yas sinirliysa
+            # hic kalite gorunmuyordu). Saf liste linki (playlist?list=Y)
+            # bundan etkilenmez.
+            "noplaylist": True,
         }
 
         info, _ = extract_with_cookie_fallback(url, ydl_opts, cookies_browser)
@@ -891,7 +987,9 @@ def get_video_info():
             if not playlist_items:
                 return jsonify({"error": "Playlist videoları alınamadı"}), 400
                 
-            # Playlistin kalitelerini (format) göstermek için SADECE İLK videoyu tam detaylı çek
+            # Playlistin kalitelerini (format) göstermek için bir videoyu tam detaylı çek.
+            # Ilk video acilmazsa (yas siniri, silinmis...) siradakine gec;
+            # eskiden hata sessizce yutuluyor ve hic kalite gorunmuyordu.
             first_url = playlist_items[0]["url"]
             ydl_opts_single = {
                 "quiet": True,
@@ -900,8 +998,17 @@ def get_video_info():
                 "no_check_certificates": True,
                 "socket_timeout": 15,
             }
+            first_info = None
+            for candidate in playlist_items[:3]:
+                try:
+                    first_info, _ = extract_with_cookie_fallback(
+                        candidate["url"], ydl_opts_single, cookies_browser)
+                    if first_info and first_info.get("formats"):
+                        break
+                except Exception as e:
+                    _log_attempt(candidate["url"], "liste-kalite", e)
+                    first_info = None
             try:
-                first_info, _ = extract_with_cookie_fallback(first_url, ydl_opts_single, cookies_browser)
                 if first_info:
                     info["formats"] = first_info.get("formats", [])
                     info["thumbnail"] = info.get("thumbnail") or first_info.get("thumbnail", "")
@@ -1024,7 +1131,8 @@ def get_video_info():
             "video_formats": video_formats,
             "audio_formats": audio_formats,
             "is_playlist": is_playlist,
-            "playlist_items": playlist_items
+            "playlist_items": playlist_items,
+            "in_playlist": _playlist_url_for(url) if not is_playlist else None,
         }
 
         return jsonify(result)
@@ -1092,6 +1200,9 @@ def download_video():
         "socket_timeout": 20,
         # HLS/DASH videolarda parçaları paralel indir — büyük hız farkı yaratır
         "concurrent_fragment_downloads": 8,
+        # watch?v=X&list=Y -> sadece X (bkz. /api/info). Toplu indirme her
+        # videoyu kendi linkiyle indirdigi icin etkilenmez.
+        "noplaylist": True,
         # Büyük parçalar halinde indir (YouTube hız kısıtlamasını azaltır)
         "http_chunk_size": 10 * 1024 * 1024,
     }

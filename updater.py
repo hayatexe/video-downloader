@@ -33,6 +33,7 @@ APP_VERSION = "1.3.0"
 
 GITHUB_REPO = "hayatexe/video-downloader"
 PYPI_YTDLP_JSON = "https://pypi.org/pypi/yt-dlp/json"
+PYPI_EJS_JSON = "https://pypi.org/pypi/yt-dlp-ejs/%s/json"
 GITHUB_LATEST_RELEASE = "https://api.github.com/repos/%s/releases/latest" % GITHUB_REPO
 
 USER_AGENT = "VideoDownloader/%s" % APP_VERSION
@@ -239,11 +240,23 @@ def latest_ytdlp():
 
 
 def update_ytdlp(force=False):
-    """Yeni yt-dlp varsa indirip kullanici klasorune kurar.
+    """Yeni yt-dlp varsa indirip kullanici klasorune kurar, ardindan
+    yt-dlp-ejs'i yt-dlp'nin istedigi surume getirir.
 
     Dondurur: (guncellendi_mi, mesaj). Guncelleme bir sonraki ACILISTA
     devreye girer -- yt_dlp bu surecte zaten import edilmis durumda.
     """
+    changed, message = _update_ytdlp_core(force)
+    try:
+        ejs_changed, ejs_message = ensure_ejs()
+    except Exception as e:
+        ejs_changed, ejs_message = False, "ejs: %s" % e
+    if ejs_changed:
+        message = "%s; %s" % (message, ejs_message)
+    return changed or ejs_changed, message
+
+
+def _update_ytdlp_core(force=False):
     state = _read_state()
     now = time.time()
     # Ilk calistirmada state dosyasi yoktur -> kontrol calisir.
@@ -576,3 +589,100 @@ def apply_staged_update(staged=None, relaunch_exe=None):
     except Exception:
         return False
     return True
+
+
+# --------------------------------------------------------------------------
+# yt-dlp-ejs (YouTube JS cozucu betikleri)
+#
+# yt-dlp, YouTube'un sifre bulmacalarini harici bir JS calistiricisinda
+# (bizde paketlenen quickjs) cozer. Cozucu betikler yt-dlp-ejs paketinden
+# gelir ve yt-dlp bunlarin SURUMUNU ve HASH'ini dogrular
+# (yt_dlp/extractor/youtube/jsc/_builtin/vendor/_info.py). Yani yt-dlp
+# kendini guncelleyip yeni bir ejs surumu isterse, eski ejs reddedilir ve
+# girisli YouTube indirmeleri "Requested format is not available" ile
+# bozulur. Bu yuzden ejs, yt-dlp'nin istedigi TAM surume getirilir.
+# --------------------------------------------------------------------------
+
+def _runtime_dirs():
+    """activate() ile ayni oncelik: once kullanici, sonra paket."""
+    return [d for d in (user_runtime_dir(), bundled_runtime_dir()) if d]
+
+
+def _read_version(path, pattern):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            m = re.search(pattern, f.read(), re.M)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
+def required_ejs_version():
+    """Etkin yt-dlp kopyasinin bekledigi yt-dlp-ejs surumu."""
+    for d in _runtime_dirs():
+        pkg = os.path.join(d, "yt_dlp")
+        if _looks_like_ytdlp(pkg):
+            return _read_version(
+                os.path.join(pkg, "extractor", "youtube", "jsc", "_builtin",
+                             "vendor", "_info.py"),
+                r"^VERSION\s*=\s*['\"]([^'\"]+)")
+    return None
+
+
+def installed_ejs_version():
+    """import yt_dlp_ejs'in yukleyecegi kopyanin surumu."""
+    for d in _runtime_dirs():
+        v = _read_version(os.path.join(d, "yt_dlp_ejs", "_version.py"),
+                          r"version\s*=\s*['\"]([^'\"]+)")
+        if v:
+            return v
+    return None
+
+
+def ensure_ejs():
+    """yt-dlp-ejs'i yt-dlp'nin istedigi surume getir.
+
+    Agi sadece surumler uyusmadiginda kullanir. Dondurur: (degisti_mi, mesaj).
+    """
+    required = required_ejs_version()
+    if not required:
+        # Gelistirme modu (runtime klasoru yok): pip'teki paketler kullanilir
+        return False, "ejs: runtime yok, atlandi"
+    current = installed_ejs_version()
+    if current == required:
+        return False, "ejs guncel (%s)" % current
+
+    data = _get_json(PYPI_EJS_JSON % required)
+    wheel_url = None
+    for u in data.get("urls", []):
+        if u.get("packagetype") == "bdist_wheel":
+            wheel_url = u["url"]
+            break
+    if not wheel_url:
+        raise RuntimeError("yt-dlp-ejs %s wheel bulunamadi" % required)
+
+    runtime = user_runtime_dir()
+    os.makedirs(runtime, exist_ok=True)
+    staging = os.path.join(runtime, ".staging-ejs")
+    shutil.rmtree(staging, ignore_errors=True)
+    os.makedirs(staging, exist_ok=True)
+    try:
+        whl = os.path.join(staging, "ejs.whl")
+        with open(whl, "wb") as f:
+            f.write(_get(wheel_url, timeout=60))
+        with zipfile.ZipFile(whl) as z:
+            z.extractall(staging)
+        new_pkg = os.path.join(staging, "yt_dlp_ejs")
+        if not os.path.isfile(os.path.join(new_pkg, "yt", "solver", "lib.min.js")):
+            raise RuntimeError("indirilen yt-dlp-ejs eksik gorunuyor")
+
+        target = os.path.join(runtime, "yt_dlp_ejs")
+        old = target + ".old"
+        shutil.rmtree(old, ignore_errors=True)
+        if os.path.isdir(target):
+            os.rename(target, old)
+        shutil.move(new_pkg, target)
+        shutil.rmtree(old, ignore_errors=True)
+        return True, "yt-dlp-ejs %s -> %s" % (current or "yok", required)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)

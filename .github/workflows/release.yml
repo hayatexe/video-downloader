@@ -62,9 +62,11 @@ jobs:
           Select-String -Path installer.iss -Pattern 'MyAppVersion'
 
       - name: Python bagimliliklari
+        # [default] yt-dlp-ejs'i yt-dlp'nin bekledigi TAM surume sabitler;
+        # ayri ayri kurulursa ikisinin en sonu birbirine uymayabilir.
         run: >
           python -m pip install --upgrade pip pyinstaller "pywebview>=5.3"
-          pystray pillow flask flask-cors yt-dlp "curl_cffi>=0.7.4"
+          pystray pillow flask flask-cors "yt-dlp[default,curl-cffi]"
 
       - name: ffmpeg onbellegi
         id: ffmpeg-cache
@@ -87,6 +89,23 @@ jobs:
           Remove-Item ffmpeg\ffplay.exe -ErrorAction SilentlyContinue
           Get-ChildItem ffmpeg | Select-Object -First 5 Name
 
+      - name: quickjs indir (YouTube JS cozucu calistiricisi)
+        shell: pwsh
+        env:
+          # Surum ve hash sabit: indirilen exe kullanicinin makinesinde
+          # calisacak, dogrulanmadan pakete girmemeli.
+          QJS_VERSION: v0.17.0
+          QJS_SHA256: 2aeabf0092c3262d6b2609824418f7dd7ed1f1df939f73b2b15645230cac0d77
+        run: |
+          New-Item -ItemType Directory -Force -Path jsruntime | Out-Null
+          $url = "https://github.com/quickjs-ng/quickjs/releases/download/$env:QJS_VERSION/qjs-windows-x86_64.exe"
+          Invoke-WebRequest $url -OutFile jsruntime\qjs.exe
+          $h = (Get-FileHash jsruntime\qjs.exe -Algorithm SHA256).Hash.ToLower()
+          if ($h -ne $env:QJS_SHA256) { throw "qjs.exe hash uyusmuyor: $h" }
+          $out = (& jsruntime\qjs.exe --help 2>&1 | Out-String)
+          if ($out -notmatch 'QuickJS') { throw "qjs.exe calismadi: $out" }
+          Write-Host "quickjs tamam ($h)"
+
       - name: Uygulamayi derle
         run: python -m PyInstaller "Video Downloader.spec" --clean --noconfirm
 
@@ -99,9 +118,24 @@ jobs:
           if (-not $hit) { throw "curl_cffi pakete girmemis!" }
           Write-Host "curl_cffi tamam: $($hit[0].FullName)"
 
-      - name: ffmpeg'i pakete kopyala
+      - name: yt-dlp-ejs paketlendi mi ve surumu uyuyor mu
         shell: pwsh
-        run: Copy-Item ffmpeg "dist\Video Downloader\ffmpeg" -Recurse
+        run: |
+          # Girisli YouTube indirmeleri bu betiklere bagli. Eksikse ya da
+          # surumu yt-dlp'nin bekledigiyle uyusmuyorsa yt-dlp betigi reddeder
+          # ve indirme "Requested format is not available" ile biter.
+          $rt = "dist\Video Downloader\_internal\runtime"
+          if (-not (Test-Path "$rt\yt_dlp_ejs\yt\solver\lib.min.js")) { throw "yt_dlp_ejs pakete girmemis!" }
+          $need = (Select-String -Path "$rt\yt_dlp\extractor\youtube\jsc\_builtin\vendor\_info.py" -Pattern "^VERSION\s*=\s*'([^']+)'").Matches[0].Groups[1].Value
+          $have = (Select-String -Path "$rt\yt_dlp_ejs\_version.py" -Pattern "version\s*=\s*'([^']+)'").Matches[0].Groups[1].Value
+          if ($need -ne $have) { throw "yt-dlp ejs $need istiyor, pakette $have var" }
+          Write-Host "yt-dlp-ejs $have tamam"
+
+      - name: ffmpeg ve quickjs'i pakete kopyala
+        shell: pwsh
+        run: |
+          Copy-Item ffmpeg "dist\Video Downloader\ffmpeg" -Recurse
+          Copy-Item jsruntime "dist\Video Downloader\jsruntime" -Recurse
 
       - name: Inno Setup kur
         run: choco install innosetup -y --no-progress

@@ -24,3 +24,6 @@ downloads/
 .idea/
 Thumbs.db
 desktop.ini
+
+# quickjs (build_exe.bat / CI indirir)
+jsruntime/
