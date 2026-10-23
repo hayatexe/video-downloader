@@ -312,6 +312,29 @@ async function openLoginWindow(toast, loginUrl, platform, loginDomain, retry) {
     }
 }
 
+// watch?v=X&list=Y linkinde artik izlenen video (X) aciliyor. Listenin
+// tamamini isteyen icin tek tikla liste moduna gecis.
+function showPlaylistOffer(playlistUrl) {
+    const container = document.getElementById('toastContainer');
+    const t = document.createElement('div');
+    t.className = 'toast toast-info';
+    t.style.flexWrap = 'wrap';
+    const span = document.createElement('span');
+    span.textContent = 'Bu video bir oynatma listesinde. Sadece bu video açıldı.';
+    const btn = document.createElement('button');
+    btn.textContent = 'Tüm listeyi aç';
+    btn.style.cssText = 'margin-left:8px;padding:6px 14px;border-radius:8px;border:none;cursor:pointer;font-weight:600;font-size:13px;background:rgba(255,255,255,0.12);color:inherit;';
+    btn.onclick = () => {
+        t.remove();
+        document.getElementById('urlInput').value = playlistUrl;
+        fetchVideoInfo();
+    };
+    t.appendChild(span);
+    t.appendChild(btn);
+    container.appendChild(t);
+    setTimeout(() => t.remove(), 12000);
+}
+
 // ===== FETCH VIDEO INFO =====
 async function fetchVideoInfo() {
     const url = document.getElementById('urlInput').value.trim();
@@ -343,6 +366,7 @@ async function fetchVideoInfo() {
         currentVideoData = data;
         renderVideoInfo(data);
         showSection('videoInfo');
+        if (data.in_playlist) showPlaylistOffer(data.in_playlist);
         
         // Scroll to video info smoothly
         setTimeout(() => {

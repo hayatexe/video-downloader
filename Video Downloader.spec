@@ -39,15 +39,28 @@ datas += _cc_ret[0]
 binaries += _cc_ret[1]
 hiddenimports += _cc_ret[2]
 
+# yt_dlp ve yt_dlp_ejs ayni sekilde: kaynak 'runtime/' altina duz veri.
+# yt_dlp_ejs YouTube'un JS cozucu betikleri; yt-dlp bunlarin surumunu ve
+# hash'ini dogrular. updater.ensure_ejs() onu yt-dlp'yle birlikte
+# guncelleyebilsin diye PYZ'ye GIRMEMELI (FrozenImporter sys.path'ten once
+# gelir, PYZ'deki kopya guncellenmis kopyayi golgeler).
 import yt_dlp as _ytdlp_pkg
-_ytdlp_src = os.path.dirname(_ytdlp_pkg.__file__)
-for _root, _dirs, _files in os.walk(_ytdlp_src):
-    _dirs[:] = [d for d in _dirs if d != '__pycache__']
-    _rel = os.path.relpath(_root, _ytdlp_src)
-    _dest = os.path.join('runtime', 'yt_dlp') if _rel == '.' else os.path.join('runtime', 'yt_dlp', _rel)
-    for _f in _files:
-        if not _f.endswith('.pyc'):
-            datas.append((os.path.join(_root, _f), _dest))
+import yt_dlp_ejs as _ejs_pkg
+
+
+def _ship_source(pkg, name):
+    src = os.path.dirname(pkg.__file__)
+    for _root, _dirs, _files in os.walk(src):
+        _dirs[:] = [d for d in _dirs if d != '__pycache__']
+        _rel = os.path.relpath(_root, src)
+        _dest = os.path.join('runtime', name) if _rel == '.' else os.path.join('runtime', name, _rel)
+        for _f in _files:
+            if not _f.endswith('.pyc'):
+                datas.append((os.path.join(_root, _f), _dest))
+
+
+_ship_source(_ytdlp_pkg, 'yt_dlp')
+_ship_source(_ejs_pkg, 'yt_dlp_ejs')
 
 
 a = Analysis(
@@ -78,9 +91,10 @@ a = Analysis(
 # yt-dlp bir daha guncellenemez. Kaynak kopya 'runtime/yt_dlp' olarak
 # paketleniyor, updater.activate() oradan yukluyor.
 _before = len(a.pure)
+_RUNTIME_PKGS = ('yt_dlp', 'yt_dlp_ejs')
 a.pure = [_m for _m in a.pure
-          if not (_m[0] == 'yt_dlp' or _m[0].startswith('yt_dlp.'))]
-print('[spec] PYZ disi birakilan yt_dlp modulu: %d' % (_before - len(a.pure)))
+          if not any(_m[0] == p or _m[0].startswith(p + '.') for p in _RUNTIME_PKGS)]
+print('[spec] PYZ disi birakilan runtime modulu: %d' % (_before - len(a.pure)))
 
 pyz = PYZ(a.pure)
 

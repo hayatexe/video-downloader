@@ -15,7 +15,7 @@ if errorlevel 1 (
 )
 
 echo [1/3] Gerekli araclar yukleniyor...
-py -3 -m pip install --quiet --upgrade pyinstaller "pywebview>=5.3" pystray pillow flask flask-cors yt-dlp "curl_cffi>=0.7.4"
+py -3 -m pip install --quiet --upgrade pyinstaller "pywebview>=5.3" pystray pillow flask flask-cors "yt-dlp[default,curl-cffi]"
 if errorlevel 1 ( echo Yuklenemedi! & pause & exit /b 1 )
 
 echo [2/3] Uygulama derleniyor... (onedir modu: hizli acilis)
@@ -34,6 +34,18 @@ echo      ffmpeg kopyalaniyor...
 if not exist "dist\Video Downloader\ffmpeg" mkdir "dist\Video Downloader\ffmpeg"
 xcopy /Y /Q /E "ffmpeg\*" "dist\Video Downloader\ffmpeg\" >nul
 if errorlevel 1 ( echo HATA: ffmpeg kopyalanamadi! & pause & exit /b 1 )
+
+:: quickjs: girisli YouTube indirmeleri icin JS calistiricisi (2 MB).
+:: Surum ve hash .github/workflows/release.yml ile ayni tutulmali.
+echo      quickjs hazirlaniyor...
+if not exist "jsruntime\qjs.exe" (
+    if not exist jsruntime mkdir jsruntime
+    powershell -NoProfile -Command "Invoke-WebRequest 'https://github.com/quickjs-ng/quickjs/releases/download/v0.17.0/qjs-windows-x86_64.exe' -OutFile 'jsruntime\qjs.exe'"
+)
+powershell -NoProfile -Command "if ((Get-FileHash 'jsruntime\qjs.exe' -Algorithm SHA256).Hash.ToLower() -ne '2aeabf0092c3262d6b2609824418f7dd7ed1f1df939f73b2b15645230cac0d77') { exit 1 }"
+if errorlevel 1 ( echo HATA: qjs.exe hash uyusmuyor, jsruntime klasorunu silip tekrar deneyin! & pause & exit /b 1 )
+if not exist "dist\Video Downloader\jsruntime" mkdir "dist\Video Downloader\jsruntime"
+copy /Y "jsruntime\qjs.exe" "dist\Video Downloader\jsruntime\" >nul
 
 :: --- Isteğe bagli kod imzalama ---------------------------------------------
 :: Kod imzasi SmartScreen uyarisini zamanla ortadan kaldiran TEK yol; itibar
