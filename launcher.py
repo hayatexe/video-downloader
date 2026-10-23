@@ -150,9 +150,10 @@ class Api:
     def open_login(self, url=None, expect_domain=None):
         """Uygulama ici giris penceresi acar.
 
-        Kullanici giris yapip pencereyi kapatana kadar cerezler periyodik
-        olarak kaydedilir. Dondurur: expect_domain'e ait yakalanan cerez
-        sayisi. 0 ise giris algilanmadi; arayuz kullaniciyi uyarir.
+        Cerezler periyodik olarak kaydedilir. Oturum cerezleri gelince
+        pencere kendiliginden kapanir; kullanicinin "ne zaman kapatayim"
+        diye beklemesine gerek yok. Dondurur: oturum acildiysa expect_domain'e
+        ait cerez sayisi, acilmadiysa 0 (arayuz kullaniciyi uyarir).
 
         expect_domain onemli: YouTube girisi accounts.google.com'da yapilir,
         oranin cerezleri yt-dlp'ye yaramaz. Sadece google.com cerezi
@@ -182,15 +183,33 @@ class Api:
             # pywebview sadece O AN acik sayfanin cerezlerini verebiliyor.
             # Giris bittikten sonra kullanici pencereyi hemen kapatabilir;
             # dar bir aralikla bakiyoruz ki hedef sitenin cerezleri kacmasin.
+            confirmed_at = None
             while not done.is_set():
                 time.sleep(1.5)
                 try:
                     cookies = login_win.get_cookies()
-                    if cookies:
-                        app_module.save_webview_cookies(cookies)
-                        n = app_module.count_cookies_for_domain(cookies, expect_domain)
-                        if n:
-                            saved["count"] = max(saved["count"], n)
+                    if not cookies:
+                        continue
+                    app_module.save_webview_cookies(cookies)
+                    # Sadece "o siteden cerez geldi" yetmez: YouTube giris
+                    # yapmamis ziyaretciye de cerez verir. Gercek oturum
+                    # cerezleri (YouTube'da LOGIN_INFO + SAPISID) gelince
+                    # giris tamam sayilir.
+                    ok, n = app_module.auth_cookie_status(cookies, expect_domain)
+                    if not ok:
+                        continue
+                    saved["count"] = max(saved["count"], n)
+                    if confirmed_at is None:
+                        # Bir tur daha bekle: yan cerezler (PSIDTS vb.) de
+                        # yazilsin, sonra pencereyi kapat.
+                        confirmed_at = time.time()
+                    elif time.time() - confirmed_at >= 1.5:
+                        _log("[giris] oturum cerezleri alindi, pencere kapatiliyor")
+                        try:
+                            login_win.destroy()
+                        except Exception:
+                            pass
+                        break
                 except Exception:
                     pass
 

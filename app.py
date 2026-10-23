@@ -231,9 +231,8 @@ LOGIN_PLATFORMS = [
      "https://accounts.google.com/ServiceLogin?service=youtube&passive=true"
      "&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin"
      "%3Dtrue%26app%3Ddesktop%26next%3D%252F",
-     "Giriş bitince pencere YouTube'a döner; YouTube ana sayfasını gördükten "
-     "sonra kapatın. Google girişi engellenirse tarayıcınızda YouTube'a girip "
-     "\"tekrar dene\" deyin."),
+     "Giriş tamamlanınca pencere kendiliğinden kapanır. Google girişi "
+     "engellenirse tarayıcınızda YouTube'a girip \"tekrar dene\" deyin."),
     (r'(?://|\.)(?:twitter\.com|x\.com)', "X (Twitter)",
      "https://x.com/i/flow/login", ""),
     (r'(?://|\.)facebook\.com', "Facebook",
@@ -283,6 +282,40 @@ def _login_payload(info):
             "login_domain": info["cookie_domain"]}
 
 
+# Bir oturumun GERCEKTEN acik oldugunu gosteren cerezler. Her grup icin en az
+# bir isim bulunmali. Sadece "o siteden cerez geldi mi" diye bakmak yetmez:
+# YouTube giris yapilmamis ziyaretcilere de YSC / VISITOR_INFO1_LIVE verir,
+# boylece giris bitmeden "giris kaydedildi" deniyordu.
+#
+# YouTube olcutu yt-dlp'nin kendi kontroluyle (_has_auth_cookies) birebir
+# ayni: LOGIN_INFO + SAPISID ailesinden biri. Ayni olcutu kullanmazsak bizim
+# "giris tamam" dedigimiz cerezlerle yt-dlp hala anonim davranabilir.
+AUTH_COOKIES = {
+    "youtube.com": (("LOGIN_INFO",),
+                    ("SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID")),
+    "tiktok.com": (("sessionid", "sessionid_ss", "sid_tt"),),
+    "instagram.com": (("sessionid",),),
+    "x.com": (("auth_token",),),
+    "facebook.com": (("c_user",),),
+    "reddit.com": (("reddit_session",),),
+    "twitch.tv": (("auth-token",),),
+}
+
+
+def _domain_matches(cookie_domain, domain):
+    d = (cookie_domain or "").lower().lstrip(".")
+    return d == domain or d.endswith("." + domain)
+
+
+def _has_auth(names, domain):
+    groups = AUTH_COOKIES.get(domain)
+    if not groups:
+        # Bilinmeyen site: oturum cerezinin adini bilmiyoruz, gelen her
+        # cerezi giris sayariz (eski davranis).
+        return bool(names)
+    return all(any(n in names for n in group) for group in groups)
+
+
 def count_cookies_for_domain(cookie_list, domain):
     """pywebview'in dondurdugu cerezlerden kaci verilen alan adina ait?"""
     if not domain:
@@ -291,10 +324,125 @@ def count_cookies_for_domain(cookie_list, domain):
     n = 0
     for sc in cookie_list:
         for _name, morsel in sc.items():
-            d = (morsel["domain"] or "").lower().lstrip(".")
-            if d == domain or d.endswith("." + domain):
+            if _domain_matches(morsel["domain"], domain):
                 n += 1
     return n
+
+
+def auth_cookie_status(cookie_list, domain):
+    """Giris penceresindeki cerezlere gore oturum acildi mi?
+
+    Dondurur: (oturum_acik_mi, o_alan_adindaki_cerez_sayisi).
+    """
+    if not domain:
+        n = sum(len(sc) for sc in cookie_list)
+        return n > 0, n
+    domain = domain.lower().lstrip(".")
+    names = set()
+    for sc in cookie_list:
+        for name, morsel in sc.items():
+            if _domain_matches(morsel["domain"], domain):
+                names.add(name)
+    return _has_auth(names, domain), len(names)
+
+
+def cookie_file_has_auth(domain):
+    """Kayitli cerez dosyasinda bu site icin acik bir oturum var mi?"""
+    from http.cookiejar import MozillaCookieJar
+    if not os.path.isfile(COOKIE_FILE):
+        return False
+    jar = MozillaCookieJar(COOKIE_FILE)
+    try:
+        jar.load(ignore_discard=True, ignore_expires=True)
+    except Exception:
+        return False
+    names = {c.name for c in jar if _domain_matches(c.domain, domain)}
+    return _has_auth(names, domain)
+
+
+class _SessionLogger:
+    """Cerez dosyasiyla yapilan denemede yt-dlp'nin oturumla ilgili
+    mesajlarini yakalar.
+
+    Yas engelinde iki durum ayni hatayi uretir ("Sign in to confirm your
+    age"): oturum gecersiz (YouTube cerezleri reddetti) ya da oturum acik ama
+    hesap videoyu izleyemiyor. Ayirt etmenin tek yolu yt-dlp'nin bu
+    uyarilari. Sadece ilgili satirlari tutar; indirme ilerleme satirlari
+    birikmesin.
+    """
+
+    KEYS = ("no longer valid", "found youtube account cookies",
+            "age-verification", "age verification")
+
+    def __init__(self):
+        self.lines = []
+
+    def _keep(self, msg):
+        m = str(msg)
+        if any(k in m.lower() for k in self.KEYS):
+            self.lines.append(m)
+
+    debug = info = warning = error = _keep
+
+    def saw(self, key):
+        return any(key in line.lower() for line in self.lines)
+
+
+class UserFacingError(yt_dlp.utils.DownloadError):
+    """Mesaji zaten kullaniciya gosterilecek halde olan hata.
+
+    friendly_error bunu cevirmeye calismaz ve giris dongusu baslatmaz.
+    """
+
+
+class SessionExpiredError(UserFacingError):
+    """Uygulama ici giristen gelen oturum YouTube tarafindan reddedildi.
+
+    Tekrar giris yapmak cozer; arayuz giris butonunu gosterir.
+    """
+
+
+SESSION_EXPIRED_MESSAGE = (
+    "YouTube kayıtlı oturumu geçersiz saydı (güvenlik için yenilemiş olabilir). "
+    "Tekrar giriş yapın."
+)
+
+AGE_BLOCKED_MESSAGE = (
+    "Giriş yapıldı ama YouTube bu videoyu bu hesaba göstermiyor. Hesap 18 "
+    "yaşından küçükse ya da YouTube hesaptan yaş doğrulaması istiyorsa bu "
+    "olur. Videoyu aynı hesapla tarayıcınızda açmayı deneyin: orada da "
+    "açılmıyorsa engel YouTube tarafında, uygulamanın aşabileceği bir şey değil."
+)
+
+
+def _is_age_error(msg):
+    m = str(msg).lower()
+    return any(k in m for k in ("confirm your age", "age-restricted",
+                                "age restricted", "age verification",
+                                "age-verification", "inappropriate for some users"))
+
+
+def _is_youtube_url(url):
+    return re.search(r'(?://|\.)(?:youtube\.com|youtu\.be)/', url or "",
+                     re.IGNORECASE) is not None
+
+
+# Her denemenin hatasi buraya yazilir. Kullanici "olmuyor" dediginde neyin
+# olmadigini tahmin etmek yerine bu dosyaya bakilir.
+DOWNLOAD_LOG = os.path.join(updater.user_data_dir(), "download.log")
+
+
+def _log_attempt(url, label, err):
+    try:
+        os.makedirs(os.path.dirname(DOWNLOAD_LOG), exist_ok=True)
+        if os.path.isfile(DOWNLOAD_LOG) and os.path.getsize(DOWNLOAD_LOG) > 512 * 1024:
+            os.replace(DOWNLOAD_LOG, DOWNLOAD_LOG + ".1")
+        with open(DOWNLOAD_LOG, "a", encoding="utf-8") as f:
+            f.write("%s  %s  [%s]  %s\n" % (
+                time.strftime("%Y-%m-%d %H:%M:%S"), url, label,
+                " ".join(str(err).split())[:600]))
+    except Exception:
+        pass
 
 
 def _is_login_error(msg):
@@ -416,9 +564,18 @@ def extract_with_cookie_fallback(url, base_opts, browser_pref="auto", download=F
 
     login_err = None
     last_err = None
+    cookiefile_err = None
+    # Oturum durumu denemeden ONCE okunmali: yt-dlp is bitince cerez
+    # dosyasini geri yazar, reddedilen LOGIN_INFO o sirada silinir.
+    is_yt = _is_youtube_url(url)
+    had_yt_auth = is_yt and cookie_file_has_auth("youtube.com")
+    session_log = None
     for name, extra in attempts:
         opts = dict(base_opts)
         opts.update(extra)
+        if "cookiefile" in extra and is_yt:
+            session_log = _SessionLogger()
+            opts.update({"logger": session_log, "quiet": False, "no_warnings": False})
 
         # Her deneme, gecici hatalar icin kendi icinde birkac kez tekrarlanir.
         # Bunun ydl_opts["retries"] ile ayni sey OLMADIGINA dikkat: oradaki
@@ -446,6 +603,16 @@ def extract_with_cookie_fallback(url, base_opts, browser_pref="auto", download=F
 
         e = err
         last_err = e
+        if name:
+            label = "tarayici:" + name
+        elif "cookiefile" in extra:
+            label = "cerez-dosyasi"
+            cookiefile_err = e
+        elif "extractor_args" in extra:
+            label = "tiktok-api"
+        else:
+            label = "cerezsiz"
+        _log_attempt(url, label, e)
         if _is_login_error(e) and login_err is None:
             login_err = e
         # Cerezsiz ilk deneme "giris gerekli" ya da "sayfa okunamadi"
@@ -473,6 +640,26 @@ def extract_with_cookie_fallback(url, base_opts, browser_pref="auto", download=F
             "eksik. Uygulamanın yeni sürümünü kurun; kaynaktan çalıştırıyorsanız "
             "'pip install curl_cffi' komutunu çalıştırın."
         )
+
+    # Uygulama ici giristen gelen cerezlerle denendi ve YouTube yine yas
+    # engeli verdiyse: oturum ACIK (yt-dlp'nin olcutuyle) ama hesap bu videoyu
+    # izleyemiyor. Kullaniciyi yeniden giris dongusune sokmak bir ise
+    # yaramaz; gercek sebebi soyle.
+    if cookiefile_err is not None and is_yt and had_yt_auth and session_log is not None:
+        _log_attempt(url, "oturum", " | ".join(session_log.lines) or "-")
+        if session_log.saw("no longer valid"):
+            # Cerezler reddedildi: yeniden giris cozer
+            raise SessionExpiredError(SESSION_EXPIRED_MESSAGE)
+        if _is_age_error(cookiefile_err):
+            # Oturum gecerli ama hesap videoyu izleyemiyor
+            raise UserFacingError(AGE_BLOCKED_MESSAGE)
+
+    # Oturum cerezleriyle yapilan deneme "giris gerekli" DISINDA bir hata
+    # verdiyse o hata daha bilgilendirici: giris tamam, sorun baska yerde.
+    # Eskiden burada her zaman cerezsiz denemenin hatasi gosteriliyordu ve
+    # giristen sonra ne oldugu hic gorunmuyordu.
+    if cookiefile_err is not None and not _is_login_error(cookiefile_err):
+        raise cookiefile_err
 
     # Cerez cekme hatalari (DPAPI/kilit) yerine asil "giris gerekli" hatasini goster
     raise login_err or last_err
@@ -514,6 +701,10 @@ def friendly_error(error_msg, url=""):
     Dondurur: (mesaj, ek_alanlar). Ek alanlar giris akisi icin
     needs_login/login_url gibi bilgileri tasiyabilir.
     """
+    if isinstance(error_msg, SessionExpiredError):
+        return str(error_msg), _login_payload(detect_login_platform(url))
+    if isinstance(error_msg, UserFacingError):
+        return str(error_msg), {}
     msg = str(error_msg)
     low = msg.lower()
 
@@ -1029,7 +1220,7 @@ def download_video():
                         }
                     return
 
-            error_str, login_extra = friendly_error(error_str, url)
+            error_str, login_extra = friendly_error(e, url)
 
             with progress_lock:
                 # Giris gerekiyorsa arayuz giris butonunu burada da gostersin.
