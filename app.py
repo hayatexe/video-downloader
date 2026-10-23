@@ -222,10 +222,18 @@ LOGIN_PLATFORMS = [
     (r'(?://|\.)tiktok\.com', "TikTok", "https://www.tiktok.com/login",
      "Google/Facebook/Apple ile giriş pencerenin içinde açılır. Sorun çıkarsa "
      "QR kodu kullanın: telefonunuzdaki TikTok uygulamasıyla okutun."),
+    # continue= sart: pywebview sadece O AN acik sayfanin cerezlerini
+    # okuyabiliyor. Giris Google hesap sayfasinda biterse yalnizca
+    # google.com cerezleri toplanir; yt-dlp'nin istedigi youtube.com
+    # cerezleri hic gelmez. YouTube'un kendi "Oturum ac" butonunun
+    # kullandigi adres bu, giris bitince youtube.com'a doner.
     (r'(?://|\.)(?:youtube\.com|youtu\.be)', "YouTube",
-     "https://accounts.google.com/ServiceLogin?service=youtube",
-     "Google girişi bu pencerede engellenirse tarayıcınızda YouTube'a girip "
-     "\"Tekrar dene\" deyin; uygulama çerezleri tarayıcınızdan da okur."),
+     "https://accounts.google.com/ServiceLogin?service=youtube&passive=true"
+     "&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin"
+     "%3Dtrue%26app%3Ddesktop%26next%3D%252F",
+     "Giriş bitince pencere YouTube'a döner; YouTube ana sayfasını gördükten "
+     "sonra kapatın. Google girişi engellenirse tarayıcınızda YouTube'a girip "
+     "\"tekrar dene\" deyin."),
     (r'(?://|\.)(?:twitter\.com|x\.com)', "X (Twitter)",
      "https://x.com/i/flow/login", ""),
     (r'(?://|\.)facebook\.com', "Facebook",
@@ -235,19 +243,58 @@ LOGIN_PLATFORMS = [
 ]
 
 
+# Giris basarili sayilmasi icin cerezlerin GELMESI gereken alan adi. Giris
+# sayfasi baska bir alan adinda olabilir (YouTube -> accounts.google.com);
+# o alan adinin cerezleri yt-dlp'ye yaramaz.
+LOGIN_COOKIE_DOMAINS = {
+    "Instagram": "instagram.com",
+    "TikTok": "tiktok.com",
+    "YouTube": "youtube.com",
+    "X (Twitter)": "x.com",
+    "Facebook": "facebook.com",
+    "Reddit": "reddit.com",
+    "Twitch": "twitch.tv",
+}
+
+
 def detect_login_platform(url):
     """URL'ye gore giris yapilacak platformu, giris sayfasini ve ipucunu dondur."""
     for pattern, label, login_url, hint in LOGIN_PLATFORMS:
         if re.search(pattern, url or "", re.IGNORECASE):
-            return {"platform": label, "login_url": login_url, "hint": hint}
+            return {"platform": label, "login_url": login_url, "hint": hint,
+                    "cookie_domain": LOGIN_COOKIE_DOMAINS.get(label, "")}
     host = ""
     m = re.match(r'https?://([^/]+)', url or "", re.IGNORECASE)
     if m:
         host = m.group(1)
     if host:
-        return {"platform": host.replace("www.", ""),
-                "login_url": f"https://{host}/", "hint": ""}
-    return {"platform": "Platform", "login_url": "", "hint": ""}
+        bare = host.lower().split(":")[0]
+        if bare.startswith("www."):
+            bare = bare[4:]
+        return {"platform": bare, "login_url": f"https://{host}/", "hint": "",
+                "cookie_domain": bare}
+    return {"platform": "Platform", "login_url": "", "hint": "", "cookie_domain": ""}
+
+
+def _login_payload(info):
+    """Arayuzun giris uyarisini gostermesi icin gereken alanlar."""
+    return {"needs_login": True, "login_platform": info["platform"],
+            "login_url": info["login_url"], "login_hint": info["hint"],
+            "login_domain": info["cookie_domain"]}
+
+
+def count_cookies_for_domain(cookie_list, domain):
+    """pywebview'in dondurdugu cerezlerden kaci verilen alan adina ait?"""
+    if not domain:
+        return sum(len(sc) for sc in cookie_list)
+    domain = domain.lower().lstrip(".")
+    n = 0
+    for sc in cookie_list:
+        for _name, morsel in sc.items():
+            d = (morsel["domain"] or "").lower().lstrip(".")
+            if d == domain or d.endswith("." + domain):
+                n += 1
+    return n
 
 
 def _is_login_error(msg):
@@ -483,8 +530,7 @@ def friendly_error(error_msg, url=""):
                          or "age restricted" in low):
         info = detect_login_platform(url)
         return (f"Yaş sınırlı içerik. {info['platform']} hesabınızla giriş yapmanız gerekiyor.",
-                {"needs_login": True, "login_platform": info["platform"],
-                 "login_url": info["login_url"], "login_hint": info["hint"]})
+                _login_payload(info))
     if _is_ip_block_error(msg):
         return ("Bu içeriğe bulunduğunuz IP/bölgeden erişim engellenmiş. "
                 "Giriş yapmak bunu çözmez."), {}
@@ -494,8 +540,7 @@ def friendly_error(error_msg, url=""):
     if _is_login_error(msg):
         info = detect_login_platform(url)
         return (f"Bu içerik {info['platform']} girişi gerektiriyor.",
-                {"needs_login": True, "login_platform": info["platform"],
-                 "login_url": info["login_url"], "login_hint": info["hint"]})
+                _login_payload(info))
     if "video unavailable" in low or "no longer available" in low \
             or "has been removed" in low or "this video has been deleted" in low:
         return "Bu video kaldırılmış ya da mevcut değil.", {}
@@ -984,12 +1029,17 @@ def download_video():
                         }
                     return
 
-            error_str = friendly_error(error_str, url)[0]
+            error_str, login_extra = friendly_error(error_str, url)
 
             with progress_lock:
+                # Giris gerekiyorsa arayuz giris butonunu burada da gostersin.
+                # Yas sinirli videolarda bilgi alma gecip takilma INDIRMEDE
+                # olabiliyor; eskiden bu yol sadece kirmizi bir yazi
+                # gosteriyordu ve kullanicinin giris yapacak yeri yoktu.
                 download_progress[task_id] = {
                     "status": "error",
-                    "error": error_str[:300]
+                    "error": error_str[:300],
+                    **login_extra,
                 }
 
     thread = threading.Thread(target=do_download, daemon=True)

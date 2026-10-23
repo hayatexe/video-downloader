@@ -147,12 +147,17 @@ class Api:
         self._minimize_to_tray = bool(val)
         return True
 
-    def open_login(self, url=None):
+    def open_login(self, url=None, expect_domain=None):
         """Uygulama ici giris penceresi acar.
 
         Kullanici giris yapip pencereyi kapatana kadar cerezler periyodik
-        olarak kaydedilir. Dondurur: kaydedilen cerez sayisi (0 ise giris
-        algilanmadi, arayuz kullaniciyi tarayici cerezlerine yonlendirir).
+        olarak kaydedilir. Dondurur: expect_domain'e ait yakalanan cerez
+        sayisi. 0 ise giris algilanmadi; arayuz kullaniciyi uyarir.
+
+        expect_domain onemli: YouTube girisi accounts.google.com'da yapilir,
+        oranin cerezleri yt-dlp'ye yaramaz. Sadece google.com cerezi
+        yakalanip "giris basarili" denirse kullanici giris yapmis gibi
+        gorunup yine "giris yapin" hatasi alir.
         """
         import webview
         import app as app_module
@@ -174,14 +179,16 @@ class Api:
         saved = {"count": 0}
 
         def poller():
-            # Her 3 sn'de mevcut sayfanin cerezlerini kaydet; giristen sonra
-            # oturum cerezleri (sessionid) da yakalanmis olur.
+            # pywebview sadece O AN acik sayfanin cerezlerini verebiliyor.
+            # Giris bittikten sonra kullanici pencereyi hemen kapatabilir;
+            # dar bir aralikla bakiyoruz ki hedef sitenin cerezleri kacmasin.
             while not done.is_set():
-                time.sleep(3)
+                time.sleep(1.5)
                 try:
                     cookies = login_win.get_cookies()
                     if cookies:
-                        n = app_module.save_webview_cookies(cookies)
+                        app_module.save_webview_cookies(cookies)
+                        n = app_module.count_cookies_for_domain(cookies, expect_domain)
                         if n:
                             saved["count"] = max(saved["count"], n)
                 except Exception:

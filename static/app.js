@@ -251,10 +251,15 @@ function showToast(message, type = 'info') {
 // ===== LOGIN PROMPT (giriş gerektiren içerik) =====
 // Giriş sayfası linkin platformuna göre açılır; TikTok linkinde Instagram
 // giriş sayfası açmak işe yaramıyordu.
-function showLoginPrompt(data) {
+// onLoggedIn: giristen sonra ne yapilacak. Bilgi alma sirasinda cikan
+// uyarida videoyu tekrar sorgular; indirme sirasinda cikanda indirmeyi
+// yeniden baslatir.
+function showLoginPrompt(data, onLoggedIn) {
     const platform = (data && data.login_platform) || 'Platform';
     const loginUrl = (data && data.login_url) || '';
+    const loginDomain = (data && data.login_domain) || '';
     const hint = (data && data.login_hint) || '';
+    const retry = onLoggedIn || fetchVideoInfo;
     const container = document.getElementById('toastContainer');
     const t = document.createElement('div');
     t.className = 'toast toast-info';
@@ -268,14 +273,14 @@ function showLoginPrompt(data) {
     const loginBtn = document.createElement('button');
     loginBtn.textContent = `${platform} Giriş Yap`;
     loginBtn.style.cssText = btnStyle + 'background:linear-gradient(135deg,#8b5cf6,#6366f1);color:#fff;';
-    loginBtn.onclick = () => openLoginWindow(t, loginUrl, platform);
+    loginBtn.onclick = () => openLoginWindow(t, loginUrl, platform, loginDomain, retry);
 
     // Tarayicisinda zaten girisi olanlar icin kacis yolu: uygulama
     // cerezleri kurulu tarayicilardan da okuyabiliyor.
     const retryBtn = document.createElement('button');
     retryBtn.textContent = 'Tarayıcımdan girdim, tekrar dene';
     retryBtn.style.cssText = btnStyle + 'background:rgba(255,255,255,0.12);color:inherit;';
-    retryBtn.onclick = () => { t.remove(); fetchVideoInfo(); };
+    retryBtn.onclick = () => { t.remove(); retry(); };
 
     t.appendChild(span);
     t.appendChild(loginBtn);
@@ -284,11 +289,11 @@ function showLoginPrompt(data) {
     setTimeout(() => t.remove(), 120000);
 }
 
-async function openLoginWindow(toast, loginUrl, platform) {
+async function openLoginWindow(toast, loginUrl, platform, loginDomain, retry) {
     if (toast && toast.remove) toast.remove();
     showToast('Giriş penceresi açıldı. Giriş yaptıktan sonra pencereyi kapatın.', 'info');
     try {
-        const saved = await window.pywebview.api.open_login(loginUrl || '');
+        const saved = await window.pywebview.api.open_login(loginUrl || '', loginDomain || null);
         if (saved === 0) {
             // Pencere kapandi ama hic cerez yakalanmadi: giris tamamlanmamis.
             // Kullaniciyi bosta birakma, calisan yolu goster.
@@ -297,8 +302,8 @@ async function openLoginWindow(toast, loginUrl, platform) {
                       'uygulama çerezleri tarayıcınızdan da okur.', 'error');
             return;
         }
-        showToast('Giriş kaydedildi, video bilgisi tekrar alınıyor...', 'success');
-        fetchVideoInfo();
+        showToast('Giriş kaydedildi, tekrar deneniyor...', 'success');
+        (retry || fetchVideoInfo)();
     } catch (e) {
         showToast('Giriş penceresi açılamadı.', 'error');
     }
@@ -630,7 +635,7 @@ function trackProgress(taskId) {
             }
         } else if (progress.status === 'error') {
             evtSource.close();
-            showToast(progress.error || 'İndirme sırasında hata oluştu', 'error');
+            showDownloadError(progress);
             
             if (isBatchDownloading) {
                 processDownloadQueue();
@@ -645,6 +650,18 @@ function trackProgress(taskId) {
         evtSource.close();
         pollProgress(taskId);
     };
+}
+
+// Indirme hatasi: giris gerekiyorsa sadece kirmizi yazi degil, giris
+// butonu da goster. Toplu indirmede kuyruk zaten devam ettigi icin orada
+// yalnizca yaziyi gosteriyoruz.
+function showDownloadError(progress) {
+    if (progress.needs_login && !isBatchDownloading &&
+            window.pywebview && window.pywebview.api) {
+        showLoginPrompt(progress, startDownload);
+    } else {
+        showToast(progress.error || 'İndirme sırasında hata oluştu', 'error');
+    }
 }
 
 async function pollProgress(taskId) {
@@ -684,7 +701,7 @@ async function pollProgress(taskId) {
                         }
                         return;
                     } else if (progress.status === 'error') {
-                        showToast(progress.error || 'İndirme sırasında hata oluştu', 'error');
+                        showDownloadError(progress);
                         if (isBatchDownloading) processDownloadQueue();
                         else {
                             hideSection('downloadProgress');
