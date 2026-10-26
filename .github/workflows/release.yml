@@ -65,8 +65,17 @@ jobs:
         # [default] yt-dlp-ejs'i yt-dlp'nin bekledigi TAM surume sabitler;
         # ayri ayri kurulursa ikisinin en sonu birbirine uymayabilir.
         run: >
-          python -m pip install --upgrade pip pyinstaller "pywebview>=5.3"
+          python -m pip install --upgrade pip "pywebview>=5.3"
           pystray pillow flask flask-cors "yt-dlp[default,curl-cffi]"
+
+      - name: PyInstaller (bootloader kaynaktan derlenir)
+        # PyPI'daki hazir bootloader binlerce zararli yazilimda da kullanildigi
+        # icin Defender'in ML modeli onu taniyor ve imzasiz exe'yi
+        # "Trojan:Win32/Bearfoos.A!ml" diye karantinaya aliyordu. Kendi
+        # derledigimiz bootloader o parmak izini tasimiyor.
+        env:
+          PYINSTALLER_COMPILE_BOOTLOADER: "1"
+        run: python -m pip install --no-binary pyinstaller --no-cache-dir pyinstaller
 
       - name: ffmpeg onbellegi
         id: ffmpeg-cache

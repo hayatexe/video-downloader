@@ -549,7 +549,7 @@ def stage_app_update(info=None, progress=None, force=False):
     return state["staged_update"]
 
 
-def apply_staged_update(staged=None, relaunch_exe=None):
+def apply_staged_update(staged=None):
     """Sessiz kurulumu baslatir. True donerse uygulama HEMEN kapanmalidir.
 
     Kurulum sihirbazi uygulamanin dosyalarini degistirecegi icin surec
@@ -570,22 +570,14 @@ def apply_staged_update(staged=None, relaunch_exe=None):
     _write_state(state)
 
     installer = staged["path"]
-    exe = relaunch_exe
-    if exe is None and getattr(sys, "frozen", False):
-        exe = sys.executable
 
-    # cmd /c: kurulum bitene kadar bekler, sonra uygulamayi yeniden acar.
-    # "&" kullaniliyor ki kurulum basarisiz olsa bile uygulama geri gelsin.
-    cmdline = '"%s" %s' % (installer, " ".join(SILENT_FLAGS))
-    if exe:
-        cmdline += ' & start "" "%s"' % exe
-
-    flags = 0
-    for name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_NO_WINDOW"):
-        flags |= getattr(subprocess, name, 0)
+    # Kurulumu DOGRUDAN baslat. Eskiden gizli/ayrik bir "cmd /c kurulum &
+    # start uygulama" zinciri kuruluyordu; Defender'in davranis/ML motoru bu
+    # deseni (pencere yok + ayrik surec + indirilmis exe calistirma) zararli
+    # yazilim sayip uygulamayi karantinaya aliyordu (Bearfoos.A!ml).
+    # Yeniden acilis artik installer.iss'teki [Run] girdisinde.
     try:
-        subprocess.Popen(["cmd", "/c", cmdline], creationflags=flags,
-                         close_fds=True)
+        subprocess.Popen([installer] + SILENT_FLAGS, close_fds=True)
     except Exception:
         return False
     return True
