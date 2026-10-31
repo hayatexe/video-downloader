@@ -18,6 +18,7 @@ from flask_cors import CORS
 import updater
 updater.activate()
 import yt_dlp
+import error_reporter
 
 # PyInstaller frozen-mode: static files are in sys._MEIPASS
 if getattr(sys, 'frozen', False):
@@ -478,7 +479,25 @@ def _is_youtube_url(url):
 DOWNLOAD_LOG = os.path.join(updater.user_data_dir(), "download.log")
 
 
+# Bu istegin (thread'in) denedigi yollar. Hata raporuna "neler denendi"
+# bilgisi olarak girer; download.log kullanicinin bilgisayarinda kaliyor.
+_trace = threading.local()
+
+
+def _trace_reset():
+    _trace.attempts = []
+
+
+def _trace_get():
+    return list(getattr(_trace, "attempts", []))
+
+
 def _log_attempt(url, label, err):
+    try:
+        _trace.attempts = getattr(_trace, "attempts", []) + [
+            {"label": label, "error": str(err)}]
+    except Exception:
+        pass
     try:
         os.makedirs(os.path.dirname(DOWNLOAD_LOG), exist_ok=True)
         if os.path.isfile(DOWNLOAD_LOG) and os.path.getsize(DOWNLOAD_LOG) > 512 * 1024:
@@ -557,6 +576,51 @@ def _is_transient_error(msg):
     ))
 
 
+def _is_ssl_error(msg):
+    """TLS katmaninda kopan baglanti.
+
+    Ornek: "[SSL: INVALID_SESSION_ID] invalid session id (_ssl.c:1010)".
+    Sunucuyla bilgisayar arasinda HTTPS'i acip yeniden imzalayan bir sey
+    (antivirusun "HTTPS taramasi", kurumsal/okul agi, bazi VPN ve ISS
+    filtreleri) ya da Windows'taki OpenSSL ile o araya girenin anlasamamasi
+    bunu uretir. yt-dlp ayni baglanti yoluyla 10 kez dener ve hep ayni
+    yerde duser; ayni seyi tekrarlamak cozmez, YOLU degistirmek gerekir.
+    """
+    m = str(msg).lower()
+    return any(k in m for k in (
+        "[ssl:", "ssl: ", "sslerror", "_ssl.c", "eof occurred in violation of protocol",
+        "tlsv1 alert", "ssl handshake", "unexpected_eof_while_reading",
+        "decryption failed or bad record mac", "wrong version number",
+    ))
+
+
+# SSL hatasinda sirayla denenen alternatif ag yollari. Biri tuttugunda
+# hatirlanir ve sonraki indirmelerde bastan kullanilir.
+#   1. curl_cffi: Python'un OpenSSL'i yerine BoringSSL (Chrome'un TLS
+#      kutuphanesi) ile baglanir. Araya giren yazilim Chrome trafigini
+#      zaten sorunsuz gecirdigi icin genelde bu cozer.
+#   2. Tek baglanti + IPv4: paralel parca indirme ayni anda 8 TLS
+#      oturumu aciyor; bazi filtreler buna takiliyor. IPv6 yolunda
+#      bozuk bir ara cihaz varsa IPv4'e zorlamak onu da atlatir.
+_ssl_workaround = None
+
+
+def _ssl_fallback_attempts():
+    alts = []
+    if has_impersonate_support():
+        from yt_dlp.networking.impersonate import ImpersonateTarget
+        alts.append(("ssl:curl_cffi", {
+            "impersonate": ImpersonateTarget.from_str("chrome"),
+            "concurrent_fragment_downloads": 1,
+        }))
+    alts.append(("ssl:tek-baglanti-ipv4", {
+        "concurrent_fragment_downloads": 1,
+        "source_address": "0.0.0.0",
+        "http_chunk_size": None,
+    }))
+    return alts
+
+
 def _is_stale_ytdlp_error(msg):
     """Genellikle 'yt-dlp eskimis' anlamina gelen hatalar.
 
@@ -583,9 +647,20 @@ def _tiktok_host_attempts():
 def extract_with_cookie_fallback(url, base_opts, browser_pref="auto", download=False):
     """Try without cookies first; on login-type errors retry with the in-app
     cookie file, then with browser cookies. Returns (info, opts_used)."""
-    global _working_cookie_browser, _working_tiktok_host
+    global _working_cookie_browser, _working_tiktok_host, _ssl_workaround
+
+    _trace_reset()
+    if _ssl_workaround:
+        # Bu bilgisayarda SSL hatasini cozdugu bilinen yol: bastan kullan,
+        # her indirmede once 10 basarisiz deneme beklenmesin.
+        base_opts = dict(base_opts)
+        base_opts.update(_ssl_workaround[1])
 
     attempts = [(None, {})]
+    # Ilk deneme SSL hatasiyla duserse ag yolunu degistirerek tekrarla.
+    # Diger hatalarda bu denemeler atlanir.
+    for ssl_label, ssl_extra in ([] if _ssl_workaround else _ssl_fallback_attempts()):
+        attempts.append((None, dict(ssl_extra, _only_if_ssl=True, _label=ssl_label)))
     js_rt = _find_js_runtime() if _is_youtube_url(url) else None
     if js_rt:
         # Girissiz deneme "format yok" diye duserse ayni istegi JS
@@ -622,10 +697,20 @@ def extract_with_cookie_fallback(url, base_opts, browser_pref="auto", download=F
     is_yt = _is_youtube_url(url)
     had_yt_auth = is_yt and cookie_file_has_auth("youtube.com")
     session_log = None
+    ssl_err = None
     for name, extra in attempts:
         extra = dict(extra)
         if extra.pop("_only_if_formats_missing", False) and not _is_formats_missing(last_err):
             continue
+        ssl_label = extra.pop("_label", None)
+        only_if_ssl = extra.pop("_only_if_ssl", False)
+        if only_if_ssl and not _is_ssl_error(last_err):
+            continue
+        if ssl_err is not None and not only_if_ssl:
+            # SSL yollari bitti ve hala SSL hatasi var: cerez/tarayici
+            # denemeleri ayni ag yolunu kullanir, onlar da duser. Kullaniciyi
+            # dakikalarca bekletmek yerine simdi soyle.
+            break
         opts = dict(base_opts)
         opts.update(extra)
         if js_rt and ("cookiefile" in extra or "cookiesfrombrowser" in extra):
@@ -652,6 +737,9 @@ def extract_with_cookie_fallback(url, base_opts, browser_pref="auto", download=F
                         .get("tiktok", {}).get("api_hostname"))
                 if host:
                     _working_tiktok_host = host[0]
+                if ssl_label:
+                    _ssl_workaround = (ssl_label, {k: v for k, v in extra.items()})
+                    _log_attempt(url, "ssl-cozuldu", ssl_label)
                 return info, opts
             except Exception as e:
                 err = e
@@ -662,7 +750,9 @@ def extract_with_cookie_fallback(url, base_opts, browser_pref="auto", download=F
 
         e = err
         last_err = e
-        if name:
+        if ssl_label:
+            label = ssl_label
+        elif name:
             label = "tarayici:" + name
         elif "cookiefile" in extra:
             label = "cerez-dosyasi"
@@ -676,11 +766,18 @@ def extract_with_cookie_fallback(url, base_opts, browser_pref="auto", download=F
         _log_attempt(url, label, e)
         if _is_login_error(e) and login_err is None:
             login_err = e
+        if only_if_ssl:
+            # SSL yolu SSL disinda bir hata verdiyse (orn. format yok) asil
+            # sorun o; SSL asilmis demektir, o hatayi goster.
+            if not _is_ssl_error(e):
+                raise e
+            ssl_err = e
+            continue
         # Cerezsiz ilk deneme "giris gerekli" ya da "sayfa okunamadi"
         # DISINDA bir hata verdiyse yeniden denemenin anlami yok.
         if not extra and not _is_login_error(e) and not (
             tiktok_attempts and _is_extractor_response_error(e)
-        ) and not (js_rt and _is_formats_missing(e)):
+        ) and not (js_rt and _is_formats_missing(e)) and not _is_ssl_error(e):
             # Duz "raise" burada yanlis: istisna yukaridaki ic dongude
             # yakalanip err'e alindi, artik aktif bir istisna yok. Duz
             # raise "No active exception to reraise" uretiyor ve kullanici
@@ -688,6 +785,9 @@ def extract_with_cookie_fallback(url, base_opts, browser_pref="auto", download=F
             # "Beklenmeyen hata" goruyordu.
             raise e
         continue
+
+    if ssl_err is not None:
+        raise ssl_err
 
     # Her yol tukendi. Hata yt-dlp'nin eskimesine isaret ediyorsa bir sonraki
     # aciliSta zorla guncelleme kontrolu yapilmasi icin isaretle.
@@ -775,6 +875,31 @@ def _playlist_url_for(url):
     return "https://www.youtube.com/playlist?list=" + m.group(1)
 
 
+def _report_error(err, url, kind, user_message, login_extra, extra=None, exc=None):
+    """Kullanicinin elinde olmayan hatalari rapor rolesine gonder.
+
+    Giris isteyen ve kullaniciya ozel (UserFacingError) hatalar gonderilmez:
+    onlar uygulamanin hatasi degil, kullanicinin yapacagi bir sey var.
+    """
+    try:
+        if login_extra.get("needs_login") or isinstance(err, UserFacingError):
+            return
+        msg = str(err)
+        if exc is not None and not isinstance(exc, yt_dlp.utils.DownloadError):
+            # Yakalanmamis Python istisnasi: tipi ve son satirlar onemli
+            import traceback
+            tb = traceback.format_exception(type(exc), exc, exc.__traceback__)
+            msg = "%s: %s" % (type(exc).__name__, exc)
+            extra = dict(extra or {}, traceback="".join(tb[-3:]))
+        extra = dict(extra or {})
+        if _ssl_workaround:
+            extra["ssl_workaround"] = _ssl_workaround[0]
+        error_reporter.report(msg, url=url, kind=kind, attempts=_trace_get(),
+                              user_message=user_message, extra=extra)
+    except Exception:
+        pass
+
+
 def friendly_error(error_msg, url=""):
     """yt-dlp hatasini anlasilir bir Turkce mesaja cevir.
 
@@ -805,6 +930,12 @@ def friendly_error(error_msg, url=""):
     if _is_ip_block_error(msg):
         return ("Bu içeriğe bulunduğunuz IP/bölgeden erişim engellenmiş. "
                 "Giriş yapmak bunu çözmez."), {}
+    if _is_ssl_error(msg):
+        return ("Güvenli bağlantı (SSL) kurulamadı; farklı bağlantı yolları da "
+                "denendi. Bunu genelde antivirüsün HTTPS/web taraması, VPN, "
+                "proxy ya da okul/iş ağı yapar. Antivirüste \"HTTPS tarama\" / "
+                "\"web koruması\" ayarını kapatıp ya da başka bir ağdan tekrar "
+                "deneyin."), {}
     if "tarayıcı taklidi" in msg:
         # extract_with_cookie_fallback'in kendi mesaji; oldugu gibi gecsin
         return msg, {}
@@ -1139,8 +1270,10 @@ def get_video_info():
 
     except yt_dlp.utils.DownloadError as e:
         message, extra = friendly_error(e, url)
+        _report_error(e, url, "info", message, extra)
         return jsonify({"error": message, **extra}), 400
     except Exception as e:
+        _report_error(e, url, "info-crash", "", {}, exc=e)
         return jsonify({"error": f"Beklenmeyen hata: {str(e)[:200]}"}), 500
 
 
@@ -1332,6 +1465,10 @@ def download_video():
                     return
 
             error_str, login_extra = friendly_error(e, url)
+            _report_error(e, url, "download", error_str, login_extra,
+                          {"mode": mode, "quality": str(quality),
+                           "trim": "yes" if (s_sec is not None or e_sec is not None) else "no"},
+                          exc=e)
 
             with progress_lock:
                 # Giris gerekiyorsa arayuz giris butonunu burada da gostersin.
@@ -1482,7 +1619,16 @@ def update_status():
         # curl_cffi eksikse TikTok/Instagram cikarimi calismaz; kullanici
         # bunu Ayarlar'da gormeli.
         "impersonation": has_impersonate_support(),
+        "error_reports": error_reporter.is_enabled(),
+        "error_reports_available": error_reporter.is_configured(),
     })
+
+
+@app.route("/api/reports/enabled", methods=["POST"])
+def set_error_reports_route():
+    """Hata raporu gonderme anahtari."""
+    enabled = bool((request.json or {}).get("enabled", True))
+    return jsonify({"error_reports": error_reporter.set_enabled(enabled)})
 
 
 @app.route("/api/update/auto", methods=["POST"])
