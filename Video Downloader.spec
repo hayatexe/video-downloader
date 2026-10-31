@@ -10,7 +10,8 @@ from PyInstaller.utils.hooks import collect_all
 datas = [('static', 'static')]
 binaries = []
 hiddenimports = ['flask', 'flask_cors', 'webview', 'webview.platforms.winforms',
-                 'pystray', 'PIL', 'app', 'updater', 'popup_support']
+                 'pystray', 'PIL', 'app', 'updater', 'popup_support',
+                 'error_reporter']
 
 # --- yt-dlp: exe'ye GOMULMEZ -------------------------------------------------
 # collect_all('yt_dlp') 1047 modulu PYZ.pyz'ye derliyordu. PyInstaller'in
