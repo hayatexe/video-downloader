@@ -1,0 +1,9 @@
+{
+  "name": "video-downloader-report-relay",
+  "private": true,
+  "description": "Uygulamadan gelen hata raporlarini GitHub issue'larina ceviren role",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test"
+  }
+}

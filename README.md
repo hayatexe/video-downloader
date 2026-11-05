@@ -86,10 +86,86 @@ Böyle bir durumda güncelleme artık bir sonraki açılış beklenmeden **o and
 arka planda indirilir; yeni sürüm bir sonraki açılışta devreye girer.
 **Ayarlar → Güncelleme → Denetle** ile elle de tetikleyebilirsiniz.
 
+### SSL hataları
+
+`[SSL: INVALID_SESSION_ID] invalid session id` gibi hatalar sunucuyla
+bilgisayar arasına giren bir şeyden (antivirüsün HTTPS taraması, VPN, okul/iş
+ağı, ISS filtresi) gelir. yt-dlp aynı bağlantı yoluyla 10 kez dener ve hep aynı
+yerde düşer; tekrar denemek değil **yolu değiştirmek** gerekir. Uygulama böyle
+bir hatada sırayla şunları dener:
+
+1. **curl_cffi ile bağlan:** Python'un OpenSSL'i yerine Chrome'un TLS
+   kütüphanesi (BoringSSL). Araya giren yazılım Chrome trafiğini zaten geçirdiği
+   için çoğunlukla bu çözer.
+2. **Tek bağlantı + IPv4:** paralel parça indirmeyi kapatır, IPv4'e zorlar.
+
+Tutan yol hatırlanır ve o oturumdaki sonraki indirmelerde baştan kullanılır.
+İkisi de tutmazsa kullanıcıya antivirüsün HTTPS taramasını kapatmasını ya da
+başka ağdan denemesini söyleyen bir mesaj gösterilir.
+
 > **Not:** TikTok ve Instagram'ın web çıkarımı `curl_cffi` ile yapılan tarayıcı
 > taklidine (impersonation) ihtiyaç duyar. Bu paket eksikse yt-dlp güncel olsa
 > bile TikTok `Unexpected response from webpage request` verir ve uygulama bunu
 > "giriş gerekiyor" sanırdı. Artık pakete dahil ediliyor.
+
+## Hata raporları ve otomatik düzeltme
+
+Kullanıcıların aldığı hatalar tek tek ekran görüntüsüyle gelmesin diye
+uygulama, kullanıcının elinde olmayan hataları kendiliğinden toplar:
+
+```
+uygulama ──(anonim rapor)──> report-relay (Vercel) ──(token)──> GitHub issue
+                                                                 │ 2+ kurulumda görüldüyse
+                                                                 ▼
+                                               auto-fix etiketi → Claude → draft PR
+```
+
+* **Ne gönderilir:** temizlenmiş hata mesajı, denenen yollar (çerezsiz,
+  çerez dosyası, ssl…), sitenin alan adı (`youtube.com`), uygulama / yt-dlp /
+  Python / Windows sürümü ve rastgele bir kurulum kimliğinin hash'i.
+  **Video linki, dosya yolundaki kullanıcı adı, e-posta gönderilmez.**
+* **Ne gönderilmez:** kullanıcının çözebileceği ya da uygulamanın
+  düzeltemeyeceği hatalar (gizli/kaldırılmış video, giriş gerekiyor, bölge
+  engeli, internet yok…). Liste `error_reporter.py` → `_IGNORE`.
+* Aynı hata aynı bilgisayardan günde en fazla bir kez gider.
+* Aynı hata (parmak izi) tek issue'da toplanır; issue'daki tablo rapor
+  sayısını, etkilenen kurulum sayısını, sürümleri ve siteleri gösterir.
+* Hata **en az 2 farklı kurulumda** görüldüğünde ya da yakalanmamış bir
+  Python istisnasıysa issue'ya `auto-fix` etiketi eklenir;
+  `.github/workflows/auto-fix.yml` Claude'u çalıştırır ve Claude draft PR
+  açar. Birleştirmek senin kararın.
+* Kapatılmış bir hata **daha yeni bir sürümden** tekrar gelirse issue
+  kendiliğinden yeniden açılır (düzeltme tutmamış). Eski sürümden gelirse
+  açılmaz, o kişi henüz güncellememiştir.
+* Kullanıcı **Ayarlar → Hata Raporlarını Gönder** ile kapatabilir.
+
+### Kurulum (bir kerelik)
+
+1. **GitHub token:** GitHub → Settings → Developer settings → Fine-grained
+   tokens → yeni token. Repository access: yalnızca bu depo.
+   Permissions: **Issues: Read and write**. Başka izin verme.
+2. **Röleyi yayınla:** [vercel.com/new](https://vercel.com/new) → bu depoyu
+   içe aktar → **Root Directory: `report-relay`** → Environment Variables'a
+   `GITHUB_TOKEN` olarak 1. adımdaki token'ı ekle → Deploy.
+   Adresin `https://<proje>.vercel.app/api/report` olur; tarayıcıda açınca
+   `{"ok":true}` görmelisin.
+3. **Adresi uygulamaya ver:** GitHub → bu depo → Settings → Secrets and
+   variables → Actions → **Variables** → `REPORT_URL` =
+   `https://<proje>.vercel.app/api/report`. Release workflow'u bunu derleme
+   sırasında `error_reporter.py`'ye yazar. Tanımlı değilse uygulama hiç rapor
+   göndermez ve Ayarlar'da anahtar görünmez.
+4. **Otomatik düzeltme (isteğe bağlı):** depo Secrets'a
+   `CLAUDE_CODE_OAUTH_TOKEN` (yerelde `claude setup-token`) ya da
+   `ANTHROPIC_API_KEY` ekle. Eklemezsen issue'lar yine açılır, sadece Claude
+   çalışmaz.
+
+Yerelde denemek için: `VD_REPORT_URL=https://... python launcher.pyw`.
+Rölenin testleri: `cd report-relay && npm test`.
+
+> Issue'lardaki hata metni kullanıcıdan gelen veridir. Röle `@` etiketlerini,
+> kod bloklarını ve HTML'i etkisizleştirir; auto-fix workflow'u da Claude'a
+> bu metni talimat değil veri olarak okumasını söyler ve yalnızca draft PR
+> açabilir.
 
 ## Sürüm çıkarma (GitHub Actions)
 

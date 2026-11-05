@@ -120,6 +120,10 @@ async function refreshUpdateStatus() {
         ytLabel.title = s.ytdlp_source || '';
 
         document.getElementById('autoUpdateToggle').checked = s.auto_update !== false;
+        // Role adresi olmayan derlemede (kaynaktan calistirma) anahtar gizli
+        document.getElementById('errorReportsRow').style.display =
+            s.error_reports_available ? '' : 'none';
+        document.getElementById('errorReportsToggle').checked = s.error_reports !== false;
         document.getElementById('impersonationWarn').style.display =
             s.impersonation === false ? '' : 'none';
 
@@ -215,6 +219,22 @@ async function toggleAutoUpdate() {
         showToast(enabled
             ? 'Güncellemeler otomatik kurulacak'
             : 'Otomatik güncelleme kapatıldı', 'info');
+    } catch (e) {
+        showToast('Ayar kaydedilemedi', 'error');
+    }
+}
+
+async function toggleErrorReports() {
+    const enabled = document.getElementById('errorReportsToggle').checked;
+    try {
+        await fetch('/api/reports/enabled', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+        showToast(enabled
+            ? 'Hata raporları açık, teşekkürler'
+            : 'Hata raporları kapatıldı', 'info');
     } catch (e) {
         showToast('Ayar kaydedilemedi', 'error');
     }

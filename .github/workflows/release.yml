@@ -61,6 +61,21 @@ jobs:
           Select-String -Path updater.py -Pattern '^APP_VERSION'
           Select-String -Path installer.iss -Pattern 'MyAppVersion'
 
+      - name: Hata raporu adresini yaz
+        shell: pwsh
+        env:
+          # Settings -> Secrets and variables -> Actions -> Variables -> REPORT_URL
+          # Bos ise uygulama hic rapor gondermez.
+          REPORT_URL: ${{ vars.REPORT_URL }}
+        run: |
+          if ($env:REPORT_URL) {
+            (Get-Content error_reporter.py -Raw) -replace '(?m)^DEFAULT_REPORT_URL = ".*"', "DEFAULT_REPORT_URL = `"$env:REPORT_URL`"" |
+              Set-Content error_reporter.py -Encoding utf8 -NoNewline
+            Write-Host "Hata raporlari: acik"
+          } else {
+            Write-Host "REPORT_URL tanimli degil, hata raporlari kapali derlenecek"
+          }
+
       - name: Python bagimliliklari
         # [default] yt-dlp-ejs'i yt-dlp'nin bekledigi TAM surume sabitler;
         # ayri ayri kurulursa ikisinin en sonu birbirine uymayabilir.
